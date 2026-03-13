@@ -728,7 +728,7 @@ endif(ENABLE_HTTPS STREQUAL Module)
 
 add_custom_target(clean.${PACKAGE} COMMAND rm -f ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${PACKAGE} VERBATIM)
 add_executable(${PACKAGE} ${LIBPALO_FILES})
-target_link_libraries(${PACKAGE} ${LIBS})
+target_link_libraries(${PACKAGE} ${LIBS} stdc++)
 
 if(PROJECT_BUILD_TYPE STREQUAL RelWithDebInfo)
     add_dependencies(${PACKAGE} clean.${PACKAGE})
