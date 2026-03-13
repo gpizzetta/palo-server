@@ -246,7 +246,7 @@ endif(ICU_FOUND)
 ### check for zlib
 ################################################################################
 
-find_package(ZLIB REQUIRED COMPONENTS z)
+find_package(ZLIB REQUIRED)
 if(ZLIB_FOUND)
     set(INCLUDES ${INCLUDES} ${ZLIB_INCLUDE_DIRS})
     set(LIBS ${LIBS} z)
