@@ -52,7 +52,7 @@
 ## directory of online documentation 
 # (default directory is "Api")
 #
-# template-directory Binary/Api
+template-directory /var/lib/palo/Api
 #
 
 ## load all databases on server start into memory which are defined in the
@@ -153,8 +153,8 @@ http		"" 7777
 # log to stderr
 # log + 
 #
-# log to a file
-# log /var/log/palo.log
+# log to a file (recommended for Debian-like systems)
+# log /var/log/palo/palo.log
 #
 
 ## Log-level
@@ -276,8 +276,10 @@ enable-drillthrough
 # admin command must be followed by a https command containing the HTTPS port to
 # use.
 #
-https 7778
-
+# NOTE: disabled by default because it requires valid certificates and a
+# proper 'encryption' setting. Uncomment and configure certificates before use.
+# https 7778
+ 
 ##
 # The following certificates are need: a root certificate and a private 
 # certificate signed be root authority. In addition a file with the

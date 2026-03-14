@@ -35,7 +35,7 @@ set(REVISION "9999")
 message(STATUS "================== Configuring PALO Server Version 5.1.x ==================")
 
 # minimum required cmake version
-cmake_minimum_required(VERSION 3.0 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.10)
 
 # set project name
 project("palo" CXX C)
@@ -186,6 +186,10 @@ message(STATUS "library output directory is: ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}")
 ################################################################################
 ### check BOOST
 ################################################################################
+
+if(POLICY CMP0167)
+    cmake_policy(SET CMP0167 OLD)
+endif()
 
 find_package( Boost 1.43 REQUIRED COMPONENTS thread system)
 if(Boost_FOUND)
