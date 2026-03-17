@@ -1,10 +1,10 @@
 Package: palo-server
-Version: 5.1.4-2
+Version: 5.1.4-4
 Section: database
 Priority: optional
 Architecture: amd64
 Maintainer: Your Name <you@example.com>
-Depends: libc6, libstdc++6, libtcmalloc-minimal4
+Depends: libc6, libstdc++6, libgcc-s1, zlib1g, libssl3, libtcmalloc-minimal4, libicu76, libboost-thread1.83.0, libboost-system1.83.0, libboost-regex1.83.0
 Description: Palo 5.1 MOLAP Server
  Palo is an open source MOLAP server by Jedox.
  .
