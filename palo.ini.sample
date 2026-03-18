@@ -103,6 +103,12 @@ template-directory /var/lib/palo/Api
 #
 # no-csv-save
 
+##
+# Force use_rules=1 by default for /cell/copy requests (like/predict/copy).
+# If set, rule-based source values are used even when use_rules is omitted.
+#
+# copy-use-rules-default
+
 ## default value for database access right  
 # Possible values: N, R, W, D (default D).
 #

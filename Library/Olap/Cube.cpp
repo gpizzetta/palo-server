@@ -129,6 +129,7 @@ const uint32_t Cube::maxNewMarkerCount = 1000000;
 const uint32_t Cube::markerRebuildLimit = 100000;
 
 bool Cube::saveCSV = true;
+bool Cube::copyUseRulesDefault = false;
 
 
 bool Cube::ltMarker::operator()(const PRuleMarker &m1, const PRuleMarker &m2) const
