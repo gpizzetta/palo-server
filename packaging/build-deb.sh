@@ -15,7 +15,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
 STAGING_DIR="${BUILD_DIR}/pkg-root"
-VERSION="5.1.4-5"
+VERSION="5.1.4-6"
 PKG_NAME="palo-server_${VERSION}_amd64.deb"
 
 echo "Root directory : ${ROOT_DIR}"

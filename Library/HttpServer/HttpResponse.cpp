@@ -142,6 +142,17 @@ const StringBuffer& HttpResponse::getHeader()
         header.appendText( "Access-Control-Allow-Origin:" );
         header.appendText( Server::getCrossOrigin() );
         header.appendText( CRNL );
+
+        // Default CORS headers for browser-based clients (JS/frontends).
+        // Keep conservative defaults; extend if your client needs more.
+        header.appendText("Access-Control-Allow-Methods: GET, POST, OPTIONS");
+        header.appendText(CRNL);
+        header.appendText("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+        header.appendText(CRNL);
+        header.appendText("Access-Control-Max-Age: 86400");
+        header.appendText(CRNL);
+        header.appendText("Vary: Origin");
+        header.appendText(CRNL);
     }
 
     header.appendText(CRNL);

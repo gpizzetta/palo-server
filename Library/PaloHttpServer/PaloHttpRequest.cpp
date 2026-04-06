@@ -134,6 +134,8 @@ void PaloHttpRequest::extractHeader(char* begin, char* end)
 							type = HTTP_REQUEST_POST;
 						} else if (start + 3 == colon && strncmp(start, "GET", 3) == 0) {
 							type = HTTP_REQUEST_GET;
+						} else if (start + 7 == colon && strncmp(start, "OPTIONS", 7) == 0) {
+							type = HTTP_REQUEST_OPTIONS;
 						}
 
 						if (type != HTTP_REQUEST_ILLEGAL) {

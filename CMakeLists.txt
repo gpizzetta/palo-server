@@ -29,7 +29,7 @@
 # change palo version and revision here when needed
 set(PALO_MAJOR 5)
 set(PALO_MINOR 1)
-set(REVISION "9999")
+set(REVISION "10000")
 
 # print config message
 message(STATUS "================== Configuring PALO Server Version 5.1.x ==================")
@@ -39,6 +39,13 @@ cmake_minimum_required(VERSION 3.10)
 
 # set project name
 project("palo" CXX C)
+
+# Build with C++17 explicitly.
+# ICU on modern Debian relies on C++17 types (e.g. std::string_view), so
+# building with older standards fails.
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS ON)
 
 # set path for extra cmake modules
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/Modules/CMake")
@@ -104,6 +111,13 @@ check_cxx_compiler_flag(-Wall WallCXX)
 if(WallC AND WallCXX)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
+endif()
+
+# Generated lexer/gperf sources still use legacy `register` and trigger
+# noisy warnings with C++17; keep warnings useful by suppressing that one.
+check_cxx_compiler_flag(-Wno-register NoRegisterCXX)
+if(NoRegisterCXX)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-register")
 endif()
 
 # check if C compiler doesn't accept -c and -o together

@@ -82,8 +82,16 @@ static SSL_CTX * initializeCTX(const string& rootfile, const string& keyfile, co
 		initialized = true;
 	}
 
-	// Create our context
-	SSL_CTX* sslctx = SSL_CTX_new(TLSv1_2_method());
+	// Create our context and enforce TLS 1.2+ on modern OpenSSL.
+	SSL_CTX* sslctx = SSL_CTX_new(TLS_method());
+	if (sslctx == 0) {
+		Logger::error << "cannot create SSL context" << endl;
+		Logger::error << lastSSLError() << endl;
+		return 0;
+	}
+#ifdef TLS1_2_VERSION
+	SSL_CTX_set_min_proto_version(sslctx, TLS1_2_VERSION);
+#endif
 
 	// Load our keys and certificates
 	if (!SSL_CTX_use_certificate_chain_file(sslctx, keyfile.c_str())) {
@@ -130,7 +138,14 @@ static bool loadDHParameters(SSL_CTX* sslctx, const string& file)
 		return false;
 	}
 
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
 	DH * ret = PEM_read_bio_DHparams(bio, NULL, NULL, NULL);
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 	BIO_free(bio);
 
 	if (SSL_CTX_set_tmp_dh(sslctx, ret) < 0) {
