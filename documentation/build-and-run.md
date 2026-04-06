@@ -5,7 +5,7 @@
 D'apres `README`, `CMakeLists.txt` et les dependances linkees:
 
 - Toolchain: `build-essential`, `cmake`, `pkg-config`
-- Libs: Boost (`thread/system/regex`), OpenSSL, ICU, zlib, google-perftools
+- Libs: Boost (`thread/system/regex`), OpenSSL 3 (minimum requis par CMake), ICU, zlib, google-perftools
 - Optionnels: `bison`, `flex`, `gperf`, `doxygen`
 
 Exemple installation:
@@ -32,7 +32,7 @@ cmake --build build -- -j"$(nproc)"
 Sorties attendues:
 
 - binaire principal: `build/usr/bin/palo`
-- module HTTPS (si active en mode module): `build/usr/lib/libhttps.palo.so*`
+- module HTTPS (si active en mode module): `build/usr/lib/libhttps.palo.so*` — chargement et configuration TLS : voir `documentation/configuration.md` (section HTTPS).
 
 ## Options CMake importantes
 

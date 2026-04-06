@@ -217,16 +217,17 @@ else(Boost_FOUND)
 endif(Boost_FOUND)
 
 ################################################################################
-### check openSSL
+### check openSSL (OpenSSL 3.x — target: Debian 13+ and similar)
 ################################################################################
 
-find_package(OpenSSL REQUIRED)
+find_package(OpenSSL 3.0 REQUIRED)
 if(OPENSSL_FOUND)
     check_include_file_cxx(openssl/ssl.h HAVE_OPENSSL_SSL_H)
     check_library_exists(ssl SSL_get_error "" HAVE_SSL_LIB)
     set(INCLUDES ${INCLUDES} ${OpenSSL_INCLUDE_DIRS})
     set(OPENSSL_LIBS ssl crypto)
-    set(LIBS ${LIBS} crypto)
+    # libssl: TLS client (NetInitialisation, HttpsClientConnection); libcrypto: digests etc.
+    set(LIBS ${LIBS} ssl crypto)
 else(OPENSSL_FOUND)
     message(FATAL_ERROR "OpenSSL not available, install it!")
 endif(OPENSSL_FOUND)
