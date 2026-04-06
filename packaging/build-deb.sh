@@ -15,7 +15,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
 STAGING_DIR="${BUILD_DIR}/pkg-root"
-VERSION="5.1.4-6"
+VERSION="5.1.4-7"
 PKG_NAME="palo-server_${VERSION}_amd64.deb"
 
 echo "Root directory : ${ROOT_DIR}"
@@ -72,7 +72,8 @@ cp "${ROOT_DIR}/packaging/debian/prerm" "${STAGING_DIR}/DEBIAN/prerm"
 chmod 755 "${STAGING_DIR}/DEBIAN/postinst" "${STAGING_DIR}/DEBIAN/prerm"
 
 echo "Building .deb package..."
-dpkg-deb --build "${STAGING_DIR}" "${BUILD_DIR}/${PKG_NAME}"
+# --root-owner-group: fichiers en root:root dans l'archive (evite avertissements en build non-root)
+dpkg-deb --build --root-owner-group "${STAGING_DIR}" "${BUILD_DIR}/${PKG_NAME}"
 
 echo
 echo "Package created: ${BUILD_DIR}/${PKG_NAME}"
