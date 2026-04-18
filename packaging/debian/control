@@ -1,5 +1,5 @@
 Package: palo-server
-Version: 5.1.4-7
+Version: 5.1.4-11
 Section: database
 Priority: optional
 Architecture: amd64
@@ -8,7 +8,7 @@ Depends: libc6, libstdc++6, libgcc-s1, zlib1g, libssl3, libtcmalloc-minimal4, li
 Description: Palo 5.1 MOLAP Server
  Palo is an open source MOLAP server by Jedox.
  .
- This package installs the palo binary in /usr/bin, a default
+ This package installs the palo and paloexport binaries in /usr/bin, a default
  configuration in /etc/palo/palo.ini, a systemd unit and logrotate
  configuration.
  .

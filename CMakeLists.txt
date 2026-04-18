@@ -709,7 +709,10 @@ CollectFilesForLib("${libpalo_DIR_LIST}" LIBPALO_FILES)
 set(FILE_LIST_TO_EXCLUDE "")
 # need only for windows build in polo.exe
 file(GLOB_RECURSE EXCLUDE_FILES Programs/palorun.cpp)
-set(FILE_LIST_TO_EXCLUDE ${FILE_LIST_TO_EXCLUDE} ${EXCLUDE_FILES})
+# paloexport / paloimport are separate executables, not part of palo
+file(GLOB PALOEXPORT_LIBEXCLUDE Programs/paloexport/*.cpp)
+file(GLOB PALOIMPORT_LIBEXCLUDE Programs/paloimport/*.cpp)
+set(FILE_LIST_TO_EXCLUDE ${FILE_LIST_TO_EXCLUDE} ${EXCLUDE_FILES} ${PALOEXPORT_LIBEXCLUDE} ${PALOIMPORT_LIBEXCLUDE})
 list(REMOVE_ITEM LIBPALO_FILES ${FILE_LIST_TO_EXCLUDE})
 
 # https interface
@@ -757,6 +760,54 @@ if(PROJECT_BUILD_TYPE STREQUAL RelWithDebInfo)
                                             WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY} VERBATIM)
     add_dependencies(debug.${PACKAGE} ${PACKAGE})
 endif(PROJECT_BUILD_TYPE STREQUAL RelWithDebInfo)
+
+################################################################################
+### paloexport — export JSON structure d'un cube (client HTTP(S) sockets + OpenSSL)
+################################################################################
+
+option(ENABLE_PALOEXPORT "Build paloexport export utility" ON)
+if(ENABLE_PALOEXPORT)
+    add_executable(paloexport
+        Programs/paloexport/paloexport_main.cpp
+        Programs/paloexport/paloexport_client.cpp
+    )
+    target_include_directories(paloexport PRIVATE ${CMAKE_SOURCE_DIR}/Programs/paloexport)
+    target_link_libraries(paloexport PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+    set_target_properties(paloexport PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+    message(STATUS "paloexport: enabled")
+endif()
+
+################################################################################
+### paloimport — import JSON structure (nlohmann_json ; client HTTP paloexport à l’étape --execute)
+################################################################################
+
+option(ENABLE_PALOIMPORT "Build paloimport import utility" ON)
+if(ENABLE_PALOIMPORT)
+    find_package(nlohmann_json 3.7.0 QUIET CONFIG)
+    if(NOT nlohmann_json_FOUND)
+        include(FetchContent)
+        FetchContent_Declare(
+            nlohmann_json
+            GIT_REPOSITORY https://github.com/nlohmann/json.git
+            GIT_TAG v3.11.3
+            GIT_SHALLOW TRUE
+        )
+        set(JSON_BuildTests OFF CACHE INTERNAL "")
+        set(JSON_Install OFF CACHE INTERNAL "")
+        FetchContent_MakeAvailable(nlohmann_json)
+    endif()
+    add_executable(paloimport
+        Programs/paloimport/paloimport_main.cpp
+        Programs/paloexport/paloexport_client.cpp
+    )
+    target_include_directories(paloimport PRIVATE
+        ${CMAKE_SOURCE_DIR}/Programs/paloimport
+        ${CMAKE_SOURCE_DIR}/Programs/paloexport
+    )
+    target_link_libraries(paloimport PRIVATE nlohmann_json::nlohmann_json OpenSSL::SSL OpenSSL::Crypto)
+    set_target_properties(paloimport PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+    message(STATUS "paloimport: enabled")
+endif()
 
 ################################################################################
 ### enable doxygen to create documentation

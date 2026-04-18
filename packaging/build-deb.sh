@@ -15,7 +15,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
 STAGING_DIR="${BUILD_DIR}/pkg-root"
-VERSION="5.1.4-7"
+VERSION="5.1.4-11"
 PKG_NAME="palo-server_${VERSION}_amd64.deb"
 
 echo "Root directory : ${ROOT_DIR}"
@@ -24,12 +24,17 @@ echo "Staging dir   : ${STAGING_DIR}"
 
 mkdir -p "${BUILD_DIR}"
 
-# Configure and build if the palo binary does not exist yet
+echo "Configuring CMake (Release, paloexport inclus dans le paquet)..."
+cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -DPROJECT_BUILD_TYPE=Release -DENABLE_PALOEXPORT=ON
+
 if [ ! -x "${BUILD_DIR}/usr/bin/palo" ]; then
-  echo "Configuring and building Palo..."
-  cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -DPROJECT_BUILD_TYPE=Release
+  echo "Building Palo (full)..."
   cmake --build "${BUILD_DIR}" -- -j"$(nproc)"
+else
+  echo "Palo binary already present; incremental build."
 fi
+# Toujours construire paloexport pour le .deb
+cmake --build "${BUILD_DIR}" --target paloexport -- -j"$(nproc)"
 
 echo "Preparing staging tree..."
 rm -rf "${STAGING_DIR}"
@@ -43,8 +48,13 @@ mkdir -p \
   "${STAGING_DIR}/etc/logrotate.d" \
   "${STAGING_DIR}/DEBIAN"
 
-# Install binary
+# Install binaries
 cp "${BUILD_DIR}/usr/bin/palo" "${STAGING_DIR}/usr/bin/palo"
+if [ -x "${BUILD_DIR}/usr/bin/paloexport" ]; then
+  cp "${BUILD_DIR}/usr/bin/paloexport" "${STAGING_DIR}/usr/bin/paloexport"
+else
+  echo "WARNING: ${BUILD_DIR}/usr/bin/paloexport manquant — paquet sans paloexport (vérifiez ENABLE_PALOEXPORT et la compilation)." >&2
+fi
 
 # Install https module library if present
 if [ -f "${BUILD_DIR}/usr/lib/libhttps.palo.so" ]; then

@@ -144,9 +144,13 @@ http		"" 7777
 # http		localhost 7779
 #
 
-## cross-origin
-# to enable http requests from any origin  
-# cross-origin *
+## cross-origin (en-têtes CORS pour les clients JS / fetch depuis un autre hôte:port)
+# Par défaut : toute origine (interface admin sur un autre port, outils locaux).
+# En exposition réseau / Internet, restreindre ex. : cross-origin "https://mon-ui.exemple"
+cross-origin *
+#
+# Une seule origine (doit correspondre exactement à l’URL du navigateur, ex. localhost ≠ 127.0.0.1) :
+# cross-origin "http://localhost:8080"
 
 ### ############################################################################
 ### Logging

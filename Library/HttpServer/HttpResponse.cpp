@@ -68,7 +68,7 @@ string HttpResponse::getResponseString(HttpResponseCode code)
 	case PARTIAL:
 		return "203 Partial Information";
 	case NO_RESPONSE:
-		return "204 No Response";
+		return "204 No Content";
 
 		//  Redirection 3xx
 	case MOVED:
@@ -139,15 +139,23 @@ const StringBuffer& HttpResponse::getHeader()
     }
 
     if (Server::getCrossOrigin().size()) {
-        header.appendText( "Access-Control-Allow-Origin:" );
-        header.appendText( Server::getCrossOrigin() );
-        header.appendText( CRNL );
+        header.appendText("Access-Control-Allow-Origin: ");
+        header.appendText(Server::getCrossOrigin());
+        header.appendText(CRNL);
 
-        // Default CORS headers for browser-based clients (JS/frontends).
-        // Keep conservative defaults; extend if your client needs more.
+        // Chrome : requêtes vers réseau « privé » (ex. UI → localhost) — préflight OPTIONS.
+        header.appendText("Access-Control-Allow-Private-Network: true");
+        header.appendText(CRNL);
+
+        // Browser JS clients (admin UI, fetch): methods, custom Palo headers, expose tokens to scripts.
         header.appendText("Access-Control-Allow-Methods: GET, POST, OPTIONS");
         header.appendText(CRNL);
-        header.appendText("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+        header.appendText(
+            "Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, "
+            "X-PALO-SV, X-PALO-DB, X-PALO-DIM, X-PALO-CB, X-PALO-CC");
+        header.appendText(CRNL);
+        header.appendText(
+            "Access-Control-Expose-Headers: X-PALO-SV, X-PALO-DB, X-PALO-DIM, X-PALO-CB, X-PALO-CC");
         header.appendText(CRNL);
         header.appendText("Access-Control-Max-Age: 86400");
         header.appendText(CRNL);
