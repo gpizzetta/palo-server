@@ -49,9 +49,33 @@ Le fichier `.deb` est genere sous `build/`.
 Copier le `.deb` sur la VM puis:
 
 ```bash
-sudo dpkg -i palo-server_<version>_amd64.deb
-sudo apt-get -f install
+sudo apt update
+sudo apt install -y ./palo-server_<version>_amd64.deb
 ```
+
+Alternative si vous avez deja lance `dpkg -i`:
+
+```bash
+sudo apt --fix-broken install
+```
+
+Pourquoi: `dpkg -i` installe uniquement le fichier local et echoue si les
+dependances ne sont pas deja presentes; `apt install ./...deb` resout et
+installe automatiquement les dependances.
+
+### Diagnostic des dependances introuvables
+
+Si `apt` ne trouve pas un package (`Candidate: (none)`), verifier la
+disponibilite des dependances declarees:
+
+```bash
+apt-cache policy libtcmalloc-minimal4 libicu76 \
+  libboost-thread1.83.0 libboost-system1.83.0 libboost-regex1.83.0
+```
+
+Si un ou plusieurs paquets sont absents, reconstruire le `.deb` dans un
+environnement Debian 13 (machine, container ou chroot Debian 13) pour aligner
+les ABI/runtime packages avec la cible.
 
 Preparer l'utilisateur systeme si besoin (selon ce que fait `postinst`):
 
