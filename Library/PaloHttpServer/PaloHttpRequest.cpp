@@ -610,11 +610,11 @@ void PaloHttpRequest::setKeyValue(char * keyStart, char * keyPtr, char * valueSt
 			break;
 
 		case PaloRequestHandler::CMD_NAME_PATH:
-			fillVectorString(paloJobRequest->pathName, valueStart, valuePtr, ',');
+			fillVectorStringQuote(paloJobRequest->pathName, valueStart, valuePtr, ',');
 			break;
 
 		case PaloRequestHandler::CMD_NAME_PATH_TO:
-			fillVectorString(paloJobRequest->pathToName, valueStart, valuePtr, ',');
+			fillVectorStringQuote(paloJobRequest->pathToName, valueStart, valuePtr, ',');
 			break;
 
 		case PaloRequestHandler::CMD_VALUES:
@@ -642,7 +642,7 @@ void PaloHttpRequest::setKeyValue(char * keyStart, char * keyPtr, char * valueSt
 			break;
 
 		case PaloRequestHandler::CMD_NAME_PATHS:
-			fillVectorVectorString(paloJobRequest->pathsName, valueStart, valuePtr, ':', ',');
+			fillVectorVectorStringQuote(paloJobRequest->pathsName, valueStart, valuePtr, ':', ',');
 			break;
 		case PaloRequestHandler::CMD_FUNCTION:
 			fillUint(paloJobRequest->function, valueStart, valuePtr);

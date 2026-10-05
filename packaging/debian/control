@@ -1,5 +1,5 @@
 Package: palo-server
-Version: 5.1.4-11
+Version: 5.1.4-12
 Section: database
 Priority: optional
 Architecture: amd64
