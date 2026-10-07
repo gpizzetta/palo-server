@@ -2439,7 +2439,7 @@ void Cube::checkValueLocks(PCellStream oldvals, PUser user, StorageBase *storage
 	}
 }
 
-static ostream& operator<<(ostream& ostr, const IdentifiersType& v)
+[[maybe_unused]] static ostream& operator<<(ostream& ostr, const IdentifiersType& v)
 {
 	bool first = true;
 	ostr << dec;
