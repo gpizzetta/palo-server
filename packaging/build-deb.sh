@@ -15,7 +15,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
 STAGING_DIR="${BUILD_DIR}/pkg-root"
-VERSION="5.1.4-12"
+VERSION="5.1.4-13"
 PKG_NAME="palo-server_${VERSION}_amd64.deb"
 
 echo "Root directory : ${ROOT_DIR}"
@@ -77,6 +77,7 @@ cp "${ROOT_DIR}/packaging/logrotate/palo" "${STAGING_DIR}/etc/logrotate.d/palo"
 
 # Install Debian metadata scripts
 cp "${ROOT_DIR}/packaging/debian/control" "${STAGING_DIR}/DEBIAN/control"
+cp "${ROOT_DIR}/packaging/debian/conffiles" "${STAGING_DIR}/DEBIAN/conffiles"
 cp "${ROOT_DIR}/packaging/debian/postinst" "${STAGING_DIR}/DEBIAN/postinst"
 cp "${ROOT_DIR}/packaging/debian/prerm" "${STAGING_DIR}/DEBIAN/prerm"
 chmod 755 "${STAGING_DIR}/DEBIAN/postinst" "${STAGING_DIR}/DEBIAN/prerm"

@@ -16,6 +16,7 @@ Le script:
 ### Fichiers de packaging
 
 - controle Debian: `packaging/debian/control`
+- conffiles: `packaging/debian/conffiles` (`/etc/palo/palo.ini` preserve a l'upgrade)
 - scripts: `packaging/debian/postinst`, `packaging/debian/prerm`
 - service: `packaging/systemd/palo.service`
 - rotation logs: `packaging/logrotate/palo`
