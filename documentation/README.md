@@ -9,6 +9,7 @@ Cette documentation a ete creee a partir de l'analyse du code source et des scri
 - `documentation/configuration.md`: fonctionnement de `palo.ini`, options principales, **HTTPS/TLS**, exemples.
 - `documentation/packaging.md`: packaging Debian (`.deb`), service systemd, deploiement sur VM.
 - `documentation/operations-and-risks.md`: exploitation, observabilite, points de vigilance et ameliorations recommandees.
+- `documentation/admin-ui.md`: interface d'administration JS (`admin/`) — **fait** / **TODO**.
 
 ## Perimetre analyse
 

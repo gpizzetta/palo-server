@@ -1,302 +1,183 @@
 /**
- * Client HTTP minimal pour l’API Palo (GET, sid).
- *
- * Politique X-PALO-* : on ne renvoie pas les en-têtes X-PALO-SV / DB / DIM / CB / CC sur les requêtes.
- * Les réponses les mettent à jour (mergeHeaders), mais après une écriture le jeton base/dim/cube côté
- * serveur change souvent sans être renvoyé dans la réponse → envoyer l’ancien jeton provoque 400
- * « server/database/dimension/cube token outdated ». Le serveur accepte l’absence de jeton
- * (contrôle d’optimistic locking désactivé, voir PaloJob::checkToken).
+ * Client HTTP Palo (same-origin ou baseUrl explicite).
+ * Réponses text/plain CSV « ; » — voir palo-csv.js.
  */
 (function (global) {
   function md5PasswordHex(password) {
-    return CryptoJS.MD5(CryptoJS.enc.Utf8.parse(password)).toString(CryptoJS.enc.Hex);
-  }
-
-  function mergeHeaders(headers, tokens) {
-    const map = [
-      ['x-palo-sv', 'sv'],
-      ['x-palo-db', 'db'],
-      ['x-palo-dim', 'dim'],
-      ['x-palo-cb', 'cube'],
-      ['x-palo-cc', 'cc'],
-    ];
-    for (let i = 0; i < map.length; i++) {
-      const v = headers.get(map[i][0]);
-      if (v != null && v !== '') tokens[map[i][1]] = v;
+    if (global.CryptoJS && global.CryptoJS.MD5) {
+      return global.CryptoJS.MD5(String(password)).toString();
     }
-  }
-
-  function buildRequestHeaders(tokens) {
-    const h = {};
-    if (tokens.sv) h['X-PALO-SV'] = tokens.sv;
-    if (tokens.db) h['X-PALO-DB'] = tokens.db;
-    if (tokens.dim) h['X-PALO-DIM'] = tokens.dim;
-    if (tokens.cube) h['X-PALO-CB'] = tokens.cube;
-    if (tokens.cc) h['X-PALO-CC'] = tokens.cc;
-    return h;
-  }
-
-  /** Options fetch communes (CORS explicite — l’UI est souvent sur un autre port que l’API). */
-  var fetchCorsOpts = { mode: 'cors', credentials: 'omit' };
-
-  function wrapFetchCorsError(err) {
-    var msg = (err && err.message) ? String(err.message) : String(err);
-    if (
-      msg.indexOf('Failed to fetch') !== -1 ||
-      msg.indexOf('NetworkError') !== -1 ||
-      msg.indexOf('Load failed') !== -1
-    ) {
-      return new Error(
-        msg +
-          ' — Si l’interface n’est pas sur la même origine que Palo, ajoutez « cross-origin * » (ou votre origine) dans palo.ini, ou lancez palo avec -g \'*\', puis redémarrez le serveur.'
-      );
-    }
-    return err instanceof Error ? err : new Error(msg);
+    throw new Error('MD5 indisponible (vendor/md5.js)');
   }
 
   function PaloClient(baseUrl) {
-    this.baseUrl = baseUrl.replace(/\/$/, '');
+    this.baseUrl = String(baseUrl || '').replace(/\/$/, '');
     this.sid = null;
-    this.tokens = { sv: null, db: null, dim: null, cube: null, cc: null };
   }
 
   PaloClient.prototype._url = function (path, params) {
-    const u = new URL(path.replace(/^\//, ''), this.baseUrl + '/');
-    const p = params || {};
+    var p = Object.assign({}, params || {});
     if (this.sid) p.sid = this.sid;
-    const sp = new URLSearchParams();
+    var sp = new URLSearchParams();
     Object.keys(p).forEach(function (k) {
       if (p[k] != null && p[k] !== '') sp.set(k, String(p[k]));
     });
-    u.search = sp.toString();
-    return u.toString();
+    var q = sp.toString();
+    return this.baseUrl + path + (q ? '?' + q : '');
   };
 
-  /** Réinitialise les jetons Palo avant une requête — voir commentaire de module (évite 400 token outdated). */
-  PaloClient.prototype._resetPaloTokensForNextRequest = function () {
-    this.tokens.sv = null;
-    this.tokens.db = null;
-    this.tokens.dim = null;
-    this.tokens.cube = null;
-    this.tokens.cc = null;
-  };
-
+  /**
+   * Ne pas envoyer X-PALO-SV/DB/DIM/CB : le serveur accepte l’absence de jeton,
+   * mais répond 400 « database token outdated » si le jeton est périmé
+   * (fréquent après listes / écritures qui changent le token base).
+   * Le sid suffit pour le modeleur.
+   */
   PaloClient.prototype._fetch = function (path, params) {
-    const self = this;
-    this._resetPaloTokensForNextRequest();
-    const headers = buildRequestHeaders(this.tokens);
-    return fetch(this._url(path, params), Object.assign({ headers: headers }, fetchCorsOpts))
-      .catch(function (e) {
-        throw wrapFetchCorsError(e);
-      })
+    var self = this;
+    return fetch(this._url(path, params), { credentials: 'omit' })
       .then(function (r) {
-        mergeHeaders(r.headers, self.tokens);
         return r.text().then(function (text) {
           if (!r.ok) {
-            const err = PaloCsv.parseError(text);
-            const e = new Error(err.message);
-            e.paloCode = err.code;
-            e.body = text;
+            var err = global.PaloCsv.parseError(text);
+            var e = new Error(err.message || text || 'HTTP ' + r.status);
+            e.code = err.code;
+            e.status = r.status;
             throw e;
           }
           return text;
         });
+      })
+      .catch(function (e) {
+        if (e && e.name === 'TypeError') {
+          throw new Error(
+            'Impossible de joindre le serveur Palo (' +
+              self.baseUrl +
+              '). Vérifiez qu’il tourne et CORS si l’UI est sur une autre origine.'
+          );
+        }
+        throw e;
       });
   };
 
   PaloClient.prototype.login = function (user, password) {
-    const self = this;
-    const params = {
-      user: user,
-      password: md5PasswordHex(password),
-    };
+    var self = this;
     this.sid = null;
-    this.tokens = { sv: null, db: null, dim: null, cube: null, cc: null };
-    const headers = buildRequestHeaders(this.tokens);
-    return fetch(this._url('/server/login', params), Object.assign({ headers: headers }, fetchCorsOpts))
-      .catch(function (e) {
-        throw wrapFetchCorsError(e);
-      })
+    var params = { user: user, password: md5PasswordHex(password) };
+    return fetch(this._url('/server/login', params), { credentials: 'omit' })
       .then(function (r) {
-        mergeHeaders(r.headers, self.tokens);
         return r.text().then(function (text) {
           if (!r.ok) {
-            const err = PaloCsv.parseError(text);
-            const e = new Error(err.message);
-            e.paloCode = err.code;
-            throw e;
+            var err = global.PaloCsv.parseError(text);
+            throw new Error(err.message || 'Login échoué');
           }
-          const rows = PaloCsv.parseBody(text);
+          var rows = global.PaloCsv.parseBody(text);
           if (!rows.length) throw new Error('Réponse login vide');
           self.sid = rows[0][0];
-          return { sid: self.sid, ttl: rows[0][1] };
+          return { sid: self.sid };
         });
       });
   };
 
-  /** Infos session : groupes dont « admin » => droits étendus (cubes / dimensions système, etc.). */
-  PaloClient.prototype.userInfo = function () {
-    return this._fetch('/server/user_info', {}).then(function (text) {
-      const rows = PaloCsv.parseBody(text);
-      if (!rows.length) {
-        return { isAdmin: false, groupNames: [] };
-      }
-      const f = rows[0];
-      const groupNamesStr = f[3] != null ? String(f[3]) : '';
-      const groupNames = groupNamesStr
-        .split(',')
-        .map(function (s) {
-          return s.trim();
-        })
-        .filter(Boolean);
-      const isAdmin = groupNames.indexOf('admin') !== -1;
-      return {
-        id: f[0],
-        name: f[1],
-        groupNames: groupNames,
-        isAdmin: isAdmin,
-      };
-    });
-  };
-
-  /**
-   * Mot de passe en clair (comme documenté pour /server/change_password), pas le MD5 du login.
-   * @param {string} [targetUsername] — utilisateur à modifier ; omis = mot de passe de la session courante
-   */
-  PaloClient.prototype.changePassword = function (targetUsername, newPasswordPlain) {
-    const params = { password: newPasswordPlain };
-    if (targetUsername != null && String(targetUsername).trim() !== '') {
-      params.user = String(targetUsername).trim();
-    }
-    return this._fetch('/server/change_password', params);
-  };
-
-  /** Écrit une cellule (ex. rattachement utilisateur ↔ groupe). path = ids d’éléments séparés par des virgules. */
-  PaloClient.prototype.replaceCell = function (databaseId, cubeId, pathCommaIds, value, extraParams) {
-    const params = {
-      database: databaseId,
-      cube: cubeId,
-      path: pathCommaIds,
-      value: value,
-    };
-    if (extraParams && typeof extraParams === 'object') {
-      Object.keys(extraParams).forEach(function (k) {
-        if (extraParams[k] != null) params[k] = extraParams[k];
-      });
-    }
-    return this._fetch('/cell/replace', params);
-  };
-
   PaloClient.prototype.logout = function () {
-    const self = this;
+    var self = this;
     if (!this.sid) return Promise.resolve();
-    return this._fetch('/server/logout', {}).then(function () {
-      self.sid = null;
-      self.tokens = { sv: null, db: null, dim: null, cube: null, cc: null };
-    }).catch(function () {
-      self.sid = null;
-      self.tokens = { sv: null, db: null, dim: null, cube: null, cc: null };
-    });
-  };
-
-  PaloClient.prototype.listDatabases = function (extraParams) {
-    const p = {};
-    if (extraParams && typeof extraParams === 'object') {
-      Object.keys(extraParams).forEach(function (k) {
-        if (extraParams[k] != null) p[k] = extraParams[k];
+    return this._fetch('/server/logout', {})
+      .catch(function () {})
+      .then(function () {
+        self.sid = null;
       });
-    }
-    return this._fetch('/server/databases', p).then(function (text) {
-      return PaloCsv.parseBody(text)
-        .filter(function (f) {
-          return f.length >= 2;
-        })
-        .map(parseDatabaseRow);
-    });
   };
 
-  function parseDatabaseRow(fields) {
-    return {
-      database: fields[0],
-      name_database: fields[1],
-      number_dimensions: fields[2],
-      number_cubes: fields[3],
-      status: fields[4],
-      type: fields[5],
-      database_token: fields[6],
-    };
-  }
+  PaloClient.prototype.listDatabases = function () {
+    return this._fetch('/server/databases', { show_normal: '1', show_system: '1', show_user_info: '1' }).then(
+      function (text) {
+        return global.PaloCsv.parseBody(text)
+          .filter(function (f) {
+            return f.length >= 2;
+          })
+          .map(function (fields) {
+            return {
+              database: fields[0],
+              name_database: fields[1],
+              number_dimensions: fields[2],
+              number_cubes: fields[3],
+              status: fields[4],
+              type: fields[5],
+              database_token: fields[6],
+            };
+          });
+      }
+    );
+  };
 
   PaloClient.prototype.createDatabase = function (newName) {
     return this._fetch('/database/create', { new_name: newName }).then(function (text) {
-      const row = PaloCsv.parseBody(text)[0];
-      return parseDatabaseRow(row);
+      var f = global.PaloCsv.parseBody(text)[0] || [];
+      return { database: f[0], name_database: f[1] || newName };
     });
   };
 
-  /**
-   * @param {string|number} databaseId
-   * @param {Object} [extraParams] ex. { show_system: '1', show_attribute: '1', show_info: '1' } pour les comptes admin
-   */
-  PaloClient.prototype.listDimensions = function (databaseId, extraParams) {
-    const p = { database: databaseId };
-    if (extraParams && typeof extraParams === 'object') {
-      Object.keys(extraParams).forEach(function (k) {
-        if (extraParams[k] != null) p[k] = extraParams[k];
-      });
-    }
+  PaloClient.prototype.destroyDatabase = function (databaseId) {
+    return this._fetch('/database/destroy', { database: databaseId });
+  };
+
+  PaloClient.prototype.renameDatabase = function (databaseId, newName) {
+    return this._fetch('/database/rename', { database: databaseId, new_name: newName });
+  };
+
+  PaloClient.prototype.listDimensions = function (databaseId, extra) {
+    var p = Object.assign({ database: databaseId, show_normal: '1', show_system: '0', show_attribute: '0', show_info: '0' }, extra || {});
     return this._fetch('/database/dimensions', p).then(function (text) {
-      return PaloCsv.parseBody(text).map(parseDimensionRow);
+      return global.PaloCsv.parseBody(text)
+        .filter(function (f) {
+          return f.length >= 2;
+        })
+        .map(function (fields) {
+          return {
+            dimension: fields[0],
+            name_dimension: fields[1],
+            number_elements: fields[2],
+            type: fields[6] != null ? fields[6] : fields[3],
+            dimension_token: fields[7],
+          };
+        });
     });
   };
-
-  function parseDimensionRow(fields) {
-    return {
-      dimension: fields[0],
-      name_dimension: fields[1],
-      number_elements: fields[2],
-      maximum_level: fields[3],
-      maximum_indent: fields[4],
-      maximum_depth: fields[5],
-      type: fields[6],
-      dimension_token: fields[fields.length - 1],
-    };
-  }
 
   PaloClient.prototype.createDimension = function (databaseId, newName) {
     return this._fetch('/dimension/create', { database: databaseId, new_name: newName }).then(function (text) {
-      return parseDimensionRow(PaloCsv.parseBody(text)[0]);
+      var f = global.PaloCsv.parseBody(text)[0] || [];
+      return { dimension: f[0], name_dimension: f[1] || newName };
     });
   };
 
-  /**
-   * @param {Object} [extraParams] ex. flags show_system / show_attribute / show_info pour lister les cubes « administration »
-   */
-  PaloClient.prototype.listCubes = function (databaseId, extraParams) {
-    const p = { database: databaseId };
-    if (extraParams && typeof extraParams === 'object') {
-      Object.keys(extraParams).forEach(function (k) {
-        if (extraParams[k] != null) p[k] = extraParams[k];
-      });
-    }
+  PaloClient.prototype.destroyDimension = function (databaseId, dimensionId) {
+    return this._fetch('/dimension/destroy', { database: databaseId, dimension: dimensionId });
+  };
+
+  PaloClient.prototype.renameDimension = function (databaseId, dimensionId, newName) {
+    return this._fetch('/dimension/rename', { database: databaseId, dimension: dimensionId, new_name: newName });
+  };
+
+  PaloClient.prototype.listCubes = function (databaseId, extra) {
+    var p = Object.assign({ database: databaseId, show_normal: '1', show_system: '0', show_attribute: '0', show_info: '0' }, extra || {});
     return this._fetch('/database/cubes', p).then(function (text) {
-      return PaloCsv.parseBody(text).map(parseCubeRow);
+      return global.PaloCsv.parseBody(text)
+        .filter(function (f) {
+          return f.length >= 2;
+        })
+        .map(function (fields) {
+          return {
+            cube: fields[0],
+            name_cube: fields[1],
+            number_dimensions: fields[2],
+            dimensions: fields[3],
+            type: fields[6],
+            cube_token: fields[7],
+          };
+        });
     });
   };
-
-  function parseCubeRow(fields) {
-    return {
-      cube: fields[0],
-      name_cube: fields[1],
-      number_dimensions: fields[2],
-      dimensions: fields[3],
-      number_cells: fields[4],
-      number_filled_cells: fields[5],
-      status: fields[6],
-      type: fields[7],
-      cube_token: fields[fields.length - 1],
-    };
-  }
 
   PaloClient.prototype.createCube = function (databaseId, newName, dimensionIdsComma) {
     return this._fetch('/cube/create', {
@@ -304,7 +185,8 @@
       new_name: newName,
       dimensions: dimensionIdsComma,
     }).then(function (text) {
-      return parseCubeRow(PaloCsv.parseBody(text)[0]);
+      var f = global.PaloCsv.parseBody(text)[0] || [];
+      return { cube: f[0], name_cube: f[1] || newName };
     });
   };
 
@@ -312,127 +194,106 @@
     return this._fetch('/cube/destroy', { database: databaseId, cube: cubeId });
   };
 
-  PaloClient.prototype.destroyDimension = function (databaseId, dimensionId) {
-    return this._fetch('/dimension/destroy', { database: databaseId, dimension: dimensionId });
+  PaloClient.prototype.renameCube = function (databaseId, cubeId, newName) {
+    return this._fetch('/cube/rename', { database: databaseId, cube: cubeId, new_name: newName });
+  };
+
+  PaloClient.prototype.clearCube = function (databaseId, cubeId) {
+    return this._fetch('/cube/clear', { database: databaseId, cube: cubeId, complete: '1' });
+  };
+
+  PaloClient.prototype.cubeInfo = function (databaseId, cubeId) {
+    return this._fetch('/cube/info', { database: databaseId, cube: cubeId }).then(function (text) {
+      var f = global.PaloCsv.parseBody(text)[0] || [];
+      return {
+        cube: f[0],
+        name_cube: f[1],
+        number_dimensions: f[2],
+        dimensions: f[3],
+        number_cells: f[4],
+        number_filled_cells: f[5],
+        status: f[6],
+        type: f[7],
+      };
+    });
   };
 
   PaloClient.prototype.listElements = function (databaseId, dimensionId) {
     return this._fetch('/dimension/elements', { database: databaseId, dimension: dimensionId }).then(function (text) {
-      return PaloCsv.parseBody(text).map(parseElementRow);
+      return global.PaloCsv.parseBody(text)
+        .filter(function (f) {
+          return f.length >= 2;
+        })
+        .map(function (fields) {
+          return {
+            element: fields[0],
+            name_element: fields[1],
+            position: fields[2],
+            level: fields[3],
+            indent: fields[4],
+            depth: fields[5],
+            type: parseInt(fields[6], 10),
+            number_parents: fields[7],
+            parents: fields[8],
+            number_children: fields[9],
+            children: fields[10],
+            weights: fields[11],
+          };
+        });
     });
   };
 
-  function parseElementRow(fields) {
-    return {
-      element: fields[0],
-      name_element: fields[1],
-      position: fields[2],
-      level: fields[3],
-      indent: fields[4],
-      depth: fields[5],
-      type: fields[6],
-      number_parents: fields[7],
-      parents: fields[8] || '',
-      number_children: fields[9],
-      children: fields[10] || '',
-      weights: fields[11] || '',
-    };
-  }
-
+  /** type: 1=numeric, 2=string, 4=consolidated */
   PaloClient.prototype.createElement = function (databaseId, dimensionId, newName, typeNum, childrenCsv, weightsCsv) {
-    const params = {
+    var params = {
       database: databaseId,
       dimension: dimensionId,
       new_name: newName,
-      type: String(typeNum),
+      type: typeNum,
     };
     if (typeNum === 4 && childrenCsv) params.children = childrenCsv;
     if (weightsCsv) params.weights = weightsCsv;
     return this._fetch('/element/create', params).then(function (text) {
-      return parseElementRow(PaloCsv.parseBody(text)[0]);
-    });
-  };
-
-  /**
-   * Ajoute des enfants à un élément existant ; le type passe à consolidé si besoin (API /element/append).
-   */
-  PaloClient.prototype.elementAppend = function (databaseId, dimensionId, parentElementId, childrenCsv, weightsCsv) {
-    const params = {
-      database: databaseId,
-      dimension: dimensionId,
-      element: parentElementId,
-      children: childrenCsv,
-    };
-    if (weightsCsv) params.weights = weightsCsv;
-    return this._fetch('/element/append', params).then(function (text) {
-      return parseElementRow(PaloCsv.parseBody(text)[0]);
+      var f = global.PaloCsv.parseBody(text)[0] || [];
+      return { element: f[0], name_element: f[1] || newName };
     });
   };
 
   PaloClient.prototype.destroyElement = function (databaseId, dimensionId, elementId) {
-    return this._fetch('/element/destroy', {
+    return this._fetch('/element/destroy', { database: databaseId, dimension: dimensionId, element: elementId });
+  };
+
+  PaloClient.prototype.renameElement = function (databaseId, dimensionId, elementId, newName) {
+    return this._fetch(
+      '/element/rename',
+      { database: databaseId, dimension: dimensionId, element: elementId, new_name: newName },
+      true
+    );
+  };
+
+  /** Remplace les enfants d’un consolidé (type 4). */
+  PaloClient.prototype.replaceElement = function (databaseId, dimensionId, elementId, typeNum, childrenCsv, weightsCsv) {
+    var params = {
       database: databaseId,
       dimension: dimensionId,
       element: elementId,
-    });
-  };
-
-  PaloClient.prototype.listRules = function (databaseId, cubeId) {
-    return this._fetch('/cube/rules', { database: databaseId, cube: cubeId }).then(function (text) {
-      const body = String(text).trim();
-      if (!body) return [];
-      return PaloCsv.parseBody(text).map(parseRuleRow);
-    });
-  };
-
-  function parseRuleRow(fields) {
-    return {
-      rule: fields[0],
-      rule_string: fields[1],
-      external_identifier: fields[2],
-      comment: fields[3],
-      timestamp: fields[4],
-      active: fields[5],
-      position: fields[6],
+      type: typeNum,
     };
-  }
+    if (childrenCsv != null) params.children = childrenCsv;
+    if (weightsCsv != null) params.weights = weightsCsv;
+    return this._fetch('/element/replace', params);
+  };
 
-  PaloClient.prototype.createRule = function (databaseId, cubeId, definition) {
-    return this._fetch('/rule/create', {
+  PaloClient.prototype.elementAppend = function (databaseId, dimensionId, elementId, childrenCsv, weightsCsv) {
+    var params = {
       database: databaseId,
-      cube: cubeId,
-      definition: definition,
-      use_identifier: '0',
-    }).then(function (text) {
-      return parseRuleRow(PaloCsv.parseBody(text)[0]);
-    });
-  };
-
-  PaloClient.prototype.destroyRule = function (databaseId, cubeId, ruleId) {
-    return this._fetch('/rule/destroy', {
-      database: databaseId,
-      cube: cubeId,
-      rule: String(ruleId),
-    });
-  };
-
-  /** Optionnel : _fetch réinitialise déjà tous les jetons ; utile si l’UI veut forger un état « sans contexte ». */
-  PaloClient.prototype.clearDbToken = function () {
-    this.tokens.db = null;
-    this.tokens.dim = null;
-    this.tokens.cube = null;
-    this.tokens.cc = null;
-  };
-
-  PaloClient.prototype.clearDimToken = function () {
-    this.tokens.dim = null;
-  };
-
-  PaloClient.prototype.clearCubeToken = function () {
-    this.tokens.cube = null;
-    this.tokens.cc = null;
+      dimension: dimensionId,
+      element: elementId,
+      children: childrenCsv,
+    };
+    if (weightsCsv) params.weights = weightsCsv;
+    return this._fetch('/element/append', params);
   };
 
   global.PaloClient = PaloClient;
-  global.paloMd5PasswordHex = md5PasswordHex;
 })(typeof window !== 'undefined' ? window : globalThis);

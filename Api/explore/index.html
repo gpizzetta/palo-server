@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Palo — Modeleur</title>
+    <link rel="stylesheet" href="css/app.css" />
+  </head>
+  <body>
+    <div id="toast" class="toast hidden" role="status"></div>
+
+    <!-- Login (same-origin : le serveur qui sert cette page) -->
+    <section id="login-view" class="login-view">
+      <form id="login-form" class="login-card" autocomplete="on">
+        <h1>Modeleur Palo</h1>
+        <p class="muted" id="login-origin-label">Serveur&nbsp;: …</p>
+        <label>
+          Identifiant
+          <input id="inp-user" type="text" value="admin" autocomplete="username" required />
+        </label>
+        <label>
+          Mot de passe
+          <input id="inp-pass" type="password" value="admin" autocomplete="current-password" required />
+        </label>
+        <button type="submit" id="btn-login" class="btn btn-primary">Connexion</button>
+        <p id="login-error" class="error hidden"></p>
+      </form>
+    </section>
+
+    <div id="app" class="app hidden">
+      <header class="topbar">
+        <strong>Modeleur Palo</strong>
+        <span id="session-label" class="muted"></span>
+        <button type="button" id="btn-logout" class="btn btn-ghost">Déconnexion</button>
+      </header>
+
+      <div class="workspace">
+        <aside class="sidebar">
+          <div class="sidebar-toolbar">
+            <button type="button" id="btn-refresh-tree" class="btn btn-small" title="Rafraîchir">↻</button>
+            <button type="button" id="btn-new-database" class="btn btn-small btn-primary" title="Nouvelle base">+ Base</button>
+          </div>
+          <ul id="tree" class="tree" role="tree"></ul>
+        </aside>
+
+        <main class="detail">
+          <div id="detail-empty" class="detail-empty muted">
+            Sélectionnez une base, une dimension ou un cube dans l’arbre.
+          </div>
+          <div id="detail-panel" class="detail-panel hidden"></div>
+        </main>
+      </div>
+    </div>
+
+    <!-- Modal générique prompt -->
+    <div id="modal" class="modal hidden" aria-hidden="true">
+      <div class="modal-backdrop" data-close="1"></div>
+      <div class="modal-card" role="dialog" aria-modal="true">
+        <header class="modal-header">
+          <h2 id="modal-title">…</h2>
+          <button type="button" class="btn btn-ghost" data-close="1" aria-label="Fermer">×</button>
+        </header>
+        <div id="modal-body" class="modal-body"></div>
+        <footer class="modal-footer">
+          <button type="button" class="btn" data-close="1">Annuler</button>
+          <button type="button" id="modal-ok" class="btn btn-primary">OK</button>
+        </footer>
+      </div>
+    </div>
+
+    <script src="vendor/md5.js"></script>
+    <script src="js/palo-csv.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>

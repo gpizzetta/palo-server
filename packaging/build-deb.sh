@@ -15,7 +15,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
 STAGING_DIR="${BUILD_DIR}/pkg-root"
-VERSION="5.1.4-13"
+VERSION="5.1.4-15"
 PKG_NAME="palo-server_${VERSION}_amd64.deb"
 
 echo "Root directory : ${ROOT_DIR}"
@@ -67,6 +67,13 @@ cp "${ROOT_DIR}/palo.ini.sample" "${STAGING_DIR}/etc/palo/palo.ini"
 # Install Api directory into the data directory so that templates are available
 if [ -d "${ROOT_DIR}/Api" ]; then
   cp -R "${ROOT_DIR}/Api" "${STAGING_DIR}/var/lib/palo/Api"
+fi
+
+# Admin UI served at /explore (see PaloHttpServer::addStaticHandlers)
+if [ -d "${ROOT_DIR}/admin" ]; then
+  mkdir -p "${STAGING_DIR}/var/lib/palo/Api/explore"
+  cp -a "${ROOT_DIR}/admin/." "${STAGING_DIR}/var/lib/palo/Api/explore/"
+  rm -f "${STAGING_DIR}/var/lib/palo/Api/explore/README.md"
 fi
 
 # Install systemd unit

@@ -1,1542 +1,997 @@
+/**
+ * Modeleur Palo P0 — arbre + détail (réf. PalOOCa Modeller).
+ * Connexion same-origin uniquement (serveur qui sert /explore).
+ */
 (function () {
-  'use strict';
+  var ELEMENT_NUMERIC = 1;
+  var ELEMENT_STRING = 2;
+  var ELEMENT_CONSOLIDATED = 4;
 
   var state = {
-    baseUrl: 'http://127.0.0.1:7777',
-    username: '',
     client: null,
-    database: null,
-    dimension: null,
-    cube: null,
-    detailMode: null,
-    lastError: '',
-    lastOk: '',
-    /** Lignes brutes `list/elements` pour le panneau consolidation (exclusion sans requête). */
-    lastElementRows: null,
-    /** Id d’élément à exclure des cases à cocher (nœud cliqué dans l’arbre). */
-    excludeFromConsolidationPick: null,
-    /** Nœud parent choisi dans l’arbre pour /element/append (même élément, devient consolidé si besoin). */
-    consolidationAnchorElement: null,
-    /** Membre du groupe « admin » (voir /server/user_info). */
-    isAdmin: false,
-    /**
-     * Si vrai (et isAdmin) : listes dimensions/cubes avec objets système / attributs / info (flags API show_*).
-     * Sinon les listes se comportent comme pour un utilisateur standard (dimensions et cubes « normaux » uniquement).
-     */
-    adminFullListView: false,
-    /** Cache résolution base System + #_USER_ / #_USER_GROUP (invalidé au logout). */
-    serverUsersCtx: null,
-    /** Dimension Palo `#_Nom_` (type attributs) quand une dimension métier est sélectionnée et résolue. */
-    attributeDimension: null,
+    username: '',
+    databases: [],
+    selection: null, // { type, databaseId, databaseName, dimensionId?, dimensionName?, cubeId?, cubeName? }
+    treeOpen: {}, // key -> bool
+    elementRows: [],
+    selectedElementId: null,
+    modalResolve: null,
   };
-
-  var SYSTEM_DB_NAME = 'System';
-  var USER_DIM_NAME = '#_USER_';
-  var GROUP_DIM_NAME = '#_GROUP_';
-  var USER_GROUP_CUBE_NAME = '#_USER_GROUP';
-  /** Palo : dimension d’attributs pour une dimension métier « Nom » → `#_Nom_` (voir AttributedDimension). */
-  function attributeDimensionNameForBase(normalDimName) {
-    return '#_' + String(normalDimName) + '_';
-  }
-
-  /** Params pour retrouver la dimension d’attributs (show_attribute requis côté API). */
-  function dimensionParamsForAttributeLookup() {
-    return {
-      show_normal: '1',
-      show_attribute: '1',
-    };
-  }
-
-  /** Comptes créés par défaut dans System (minuscules). */
-  var BUILTIN_SERVER_USERS = { admin: 1, _internal_suite: 1, poweruser: 1, editor: 1, viewer: 1 };
 
   function $(id) {
     return document.getElementById(id);
   }
 
-  /**
-   * /element/append — utilise PaloClient.elementAppend si présent (api.js à jour),
-   * sinon _fetch (évite l’erreur si le navigateur sert un vieux api.js en cache).
-   */
-  function elementAppendRequest(client, databaseId, dimensionId, parentElementId, childrenCsv, weightsCsv) {
-    if (client && typeof client.elementAppend === 'function') {
-      return client.elementAppend(databaseId, dimensionId, parentElementId, childrenCsv, weightsCsv);
+  function serverBaseUrl() {
+    if (location.protocol.indexOf('http') === 0 && location.host) {
+      return location.origin;
     }
-    if (!client || typeof client._fetch !== 'function') {
-      return Promise.reject(new Error('Client API indisponible. Rechargez la page.'));
-    }
-    var params = {
-      database: databaseId,
-      dimension: dimensionId,
-      element: parentElementId,
-      children: childrenCsv,
-    };
-    if (weightsCsv) params.weights = weightsCsv;
-    return client._fetch('/element/append', params).then(function () {
-      return undefined;
-    });
+    return 'http://127.0.0.1:7777';
   }
 
-  function destroyElementRequest(client, databaseId, dimensionId, elementId) {
-    if (client && typeof client.destroyElement === 'function') {
-      return client.destroyElement(databaseId, dimensionId, elementId);
-    }
-    if (!client || typeof client._fetch !== 'function') {
-      return Promise.reject(new Error('Client API indisponible. Rechargez la page.'));
-    }
-    return client._fetch('/element/destroy', {
-      database: databaseId,
-      dimension: dimensionId,
-      element: elementId,
-    });
+  function toast(msg, kind) {
+    var el = $('toast');
+    el.textContent = msg;
+    el.className = 'toast ' + (kind || '');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () {
+      el.classList.add('hidden');
+    }, 4200);
   }
 
-  /** Fait défiler la zone horizontale (#app) pour rendre une colonne visible. */
-  function revealColumn(el) {
-    if (!el) return;
-    requestAnimationFrame(function () {
-      el.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
-    });
+  function confirmAction(message) {
+    return window.confirm(message);
   }
 
-  function hideModal(modalId) {
-    var el = $(modalId);
-    if (!el || typeof bootstrap === 'undefined') return;
-    var m = bootstrap.Modal.getInstance(el);
-    if (m) m.hide();
-  }
+  function openModal(title, bodyHtml, validateFn) {
+    $('modal-title').textContent = title;
+    $('modal-body').innerHTML = bodyHtml;
+    $('modal').classList.remove('hidden');
+    $('modal').setAttribute('aria-hidden', 'false');
+    var first = $('modal-body').querySelector('input, select, textarea');
+    if (first) setTimeout(function () {
+      first.focus();
+      if (first.select) first.select();
+    }, 30);
 
-  function updateToolbarButtons() {
-    var btnEl = $('btn-open-modal-element');
-    var btnAttr = $('btn-open-modal-attribute');
-    var btnRule = $('btn-open-modal-rule');
-    var btnCons = $('btn-consolidate-create');
-    var dimElOk = state.dimension && isDimensionElementsMutable(state.dimension);
-    var attrOk =
-      state.attributeDimension &&
-      isDimensionElementsMutable(state.attributeDimension) &&
-      state.dimension &&
-      isNormalDimensionRow(state.dimension);
-    var dimConsOk = state.dimension && isNormalDimensionRow(state.dimension);
-    var cubeOk = state.cube && isNormalCubeRow(state.cube);
-    if (btnEl) btnEl.disabled = !dimElOk;
-    if (btnAttr) btnAttr.disabled = !attrOk;
-    if (btnRule) btnRule.disabled = !cubeOk;
-    if (btnCons) btnCons.disabled = !dimConsOk;
-  }
-
-  function populateCubeDimensionPicker() {
-    var container = $('cube-dim-picker');
-    if (!container || !state.client || !state.database) return;
-    container.innerHTML = '<div class="list-group-item text-muted small border-0">Chargement…</div>';
-    state.client
-      .listDimensions(state.database.database)
-      .then(function (dims) {
-        var normal = dims.filter(function (d) {
-          return String(d.type) === '0';
-        });
-        normal.sort(function (a, b) {
-          return String(a.name_dimension).localeCompare(String(b.name_dimension), 'fr', { sensitivity: 'base' });
-        });
-        container.innerHTML = '';
-        normal.forEach(function (d) {
-          var btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'list-group-item list-group-item-action cube-dim-pick-item text-start';
-          btn.dataset.dimId = String(d.dimension);
-          btn.setAttribute('aria-pressed', 'false');
-          btn.textContent = d.name_dimension + ' (id ' + d.dimension + ')';
-          btn.addEventListener('click', function () {
-            var on = btn.classList.toggle('active');
-            btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-          });
-          container.appendChild(btn);
-        });
-        if (!normal.length) {
-          container.innerHTML =
-            '<div class="list-group-item text-muted small border-0">Aucune dimension disponible. Créez une dimension d’abord.</div>';
+    return new Promise(function (resolve) {
+      state.modalResolve = function (ok) {
+        if (!ok) {
+          closeModal();
+          resolve(null);
+          return;
         }
-      })
-      .catch(function (e) {
-        container.innerHTML =
-          '<div class="list-group-item text-danger small border-0">' + escapeHtml(e.message || String(e)) + '</div>';
-      });
-  }
-
-  function getSelectedCubeDimensionIds() {
-    var container = $('cube-dim-picker');
-    if (!container) return [];
-    var ids = [];
-    container.querySelectorAll('.cube-dim-pick-item.active').forEach(function (btn) {
-      if (btn.dataset.dimId != null) ids.push(btn.dataset.dimId);
+        var result;
+        try {
+          result = validateFn ? validateFn() : true;
+        } catch (e) {
+          toast(e.message || String(e), 'err');
+          return;
+        }
+        if (result == null) return;
+        closeModal();
+        resolve(result);
+      };
     });
-    return ids;
   }
 
-  /** Listes étendues (système, attributs…) : droits admin + option utilisateur. */
-  function useExtendedLists() {
-    return state.isAdmin && state.adminFullListView;
+  function closeModal() {
+    $('modal').classList.add('hidden');
+    $('modal').setAttribute('aria-hidden', 'true');
+    $('modal-body').innerHTML = '';
+    state.modalResolve = null;
   }
 
-  /**
-   * Admin en mode listes « simples » : dimensions/cubes normaux + attributs côté API (show_attribute),
-   * pour pouvoir résoudre #_NomDim_ et afficher les attributs dans le panneau détail.
-   * La colonne latérale masque les lignes #_… (voir isDimensionRowInSimpleView / isCubeRowInSimpleView).
-   */
-  function dbListParamsAdminSimple() {
-    if (!state.isAdmin) return null;
-    return {
-      show_normal: '1',
-      show_attribute: '1',
-    };
+  function promptName(title, label, defaultValue) {
+    return openModal(
+      title,
+      '<label>' +
+        label +
+        '<input id="modal-name" type="text" value="' +
+        escapeAttr(defaultValue || '') +
+        '" /></label>',
+      function () {
+        var v = ($('modal-name').value || '').trim();
+        if (!v) throw new Error('Nom requis.');
+        return v;
+      }
+    );
   }
 
-  /** Paramètres API pour tout voir : système, user info, GPU (case « Listes complètes »). */
-  function dbListExtraParams() {
-    if (!useExtendedLists()) return null;
-    return {
-      show_normal: '1',
-      show_system: '1',
-      show_attribute: '1',
-      show_info: '1',
-      show_gputype: '1',
-    };
-  }
-
-  /** Params pour /database/dimensions et /database/cubes selon le mode. */
-  function dbListParamsForExplorer() {
-    if (useExtendedLists()) return dbListExtraParams();
-    return dbListParamsAdminSimple();
-  }
-
-  /**
-   * Vue non étendue : uniquement dimensions « métier » (type 0), sans lignes #_…
-   * (les attributs sont affichés dans le panneau détail sous l’arbre).
-   */
-  function isDimensionRowInSimpleView(d) {
-    var t = String(d.type);
-    if (t !== '0') return false;
-    var n = String(d.name_dimension || '');
-    return n.indexOf('#_') !== 0;
-  }
-
-  /** Vue non étendue : cubes métier (type 0) sans préfixe #_ (cubes d’attributs exclus). */
-  function isCubeRowInSimpleView(c) {
-    var t = String(c.type);
-    if (t !== '0') return false;
-    var n = String(c.name_cube || '');
-    return n.indexOf('#_') !== 0;
-  }
-
-  /** Résolution des noms de dimensions dans le panneau « Dimensions du cube » : toujours étendu si compte admin. */
-  function dimensionListParamsForCubeInfo() {
-    if (!state.isAdmin) return null;
-    return {
-      show_normal: '1',
-      show_system: '1',
-      show_attribute: '1',
-      show_info: '1',
-      show_gputype: '1',
-    };
-  }
-
-  /** Suffixe de type : en vue simple admin, on indique quand même attr. / info pour les lignes affichées. */
-  function dimensionTypeSuffix(type) {
-    var ts = String(type);
-    if (ts === '0' || ts === '1') return '';
-    var m = { '2': 'attr.', '3': 'info' };
-    var s = m[ts];
-    if (!s) return '';
-    if (useExtendedLists()) return ' · ' + s;
-    if (state.isAdmin && (ts === '2' || ts === '3')) return ' · ' + s;
-    return '';
-  }
-
-  function cubeTypeSuffix(type) {
-    var ts = String(type);
-    if (ts === '0' || ts === '1') return '';
-    var m = { '2': 'attr.', '3': 'info', '4': 'GPU' };
-    var s = m[ts];
-    if (!s) return '';
-    if (useExtendedLists()) return ' · ' + s;
-    if (state.isAdmin && (ts === '2' || ts === '3')) return ' · ' + s;
-    return '';
-  }
-
-  /**
-   * Type Palo CSV dimension : 0 = NORMAL ; 2 = attributs (#_Nom_#_) ; 1 = système ; 3 = user info ; 4 = virtuel.
-   * Seules les dimensions normales (0) sont supprimables comme dimension « métier ».
-   */
-  function isNormalDimensionRow(d) {
-    return d != null && String(d.type) === '0';
-  }
-
-  /** Création / suppression d’éléments : dimensions normales (0) ou d’attributs (2). */
-  function isDimensionElementsMutable(d) {
-    if (!d) return false;
-    var t = String(d.type);
-    return t === '0' || t === '2';
-  }
-
-  /** 0 = cube normal ; les cubes système / attributs / info / GPU ne sont pas supprimables comme un cube métier. */
-  function isNormalCubeRow(c) {
-    return c != null && String(c.type) === '0';
-  }
-
-  function parseCubeDimensionIds(dimensionsField) {
-    if (dimensionsField == null || dimensionsField === '') return [];
-    return String(dimensionsField)
-      .split(',')
-      .map(function (x) {
-        return x.trim();
-      })
-      .filter(Boolean);
-  }
-
-  /** Affiche les dimensions du cube sélectionné (liste informative, non interactive). */
-  function refreshCubeDimensionInfo() {
-    var ul = $('cube-view-dim-list');
-    if (!ul || !state.client || !state.database || !state.cube) return Promise.resolve();
-    var ids = parseCubeDimensionIds(state.cube.dimensions);
-    if (!ids.length) {
-      ul.innerHTML =
-        '<li class="list-group-item small text-muted border-0">Aucune dimension référencée pour ce cube.</li>';
-      return Promise.resolve();
-    }
-    var extra = dimensionListParamsForCubeInfo();
-    return state.client
-      .listDimensions(state.database.database, extra || undefined)
-      .then(function (dims) {
-        var idToName = {};
-        dims.forEach(function (d) {
-          idToName[String(d.dimension)] = d.name_dimension;
-        });
-        ul.innerHTML = '';
-        ids.forEach(function (id, idx) {
-          var li = el('li', 'list-group-item small py-2');
-          li.textContent = idx + 1 + '. ' + (idToName[id] || '?') + ' (id ' + id + ')';
-          ul.appendChild(li);
-        });
-      })
-      .catch(function (e) {
-        ul.innerHTML =
-          '<li class="list-group-item small text-danger border-0">' + escapeHtml(e.message || String(e)) + '</li>';
-      });
+  function escapeAttr(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;');
   }
 
   function escapeHtml(s) {
-    var d = document.createElement('div');
-    d.textContent = s == null ? '' : String(s);
-    return d.innerHTML;
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
   }
 
-  function showError(msg) {
-    state.lastError = msg || '';
-    state.lastOk = '';
-    var el = $('global-error');
-    if (el) {
-      el.textContent = state.lastError;
-      el.classList.toggle('d-none', !state.lastError);
-    }
+  function treeKey(parts) {
+    return parts.join('/');
   }
 
-  function showOk(msg) {
-    state.lastOk = msg || '';
-    state.lastError = '';
-    var el = $('global-ok');
-    if (el) {
-      el.textContent = state.lastOk;
-      el.classList.toggle('d-none', !state.lastOk);
-    }
+  function isOpen(key) {
+    return state.treeOpen[key] !== false; // default open for databases
   }
 
-  function clearMessages() {
-    showError('');
-    showOk('');
+  function setOpen(key, open) {
+    state.treeOpen[key] = open;
   }
 
-  function el(tag, className, text) {
-    var n = document.createElement(tag);
-    if (className) n.className = className;
-    if (text != null) n.textContent = text;
-    return n;
+  function selectionEquals(a, b) {
+    if (!a || !b) return false;
+    return (
+      a.type === b.type &&
+      a.databaseId === b.databaseId &&
+      a.dimensionId === b.dimensionId &&
+      a.cubeId === b.cubeId &&
+      a.folder === b.folder
+    );
   }
 
-  function isProtectedServerUser(name) {
-    return !!BUILTIN_SERVER_USERS[String(name).toLowerCase()];
+  function selectNode(sel) {
+    state.selection = sel;
+    state.selectedElementId = null;
+    renderTree();
+    return renderDetail();
   }
 
-  function serverExplorerListParams() {
-    return { show_normal: '1', show_system: '1', show_user_info: '1' };
-  }
+  /* ---------- Tree ---------- */
 
-  function clearServerUsersCtx() {
-    state.serverUsersCtx = null;
-  }
-
-  function resolveServerUsersContext() {
-    if (!state.client) return Promise.reject(new Error('Non connecté.'));
-    if (state.serverUsersCtx) return Promise.resolve(state.serverUsersCtx);
-    var ep = serverExplorerListParams();
-    return state.client.listDatabases(ep).then(function (dbs) {
-      var sys = dbs.filter(function (d) {
-        return String(d.name_database) === SYSTEM_DB_NAME;
-      })[0];
-      if (!sys) {
-        throw new Error(
-          'Base « System » introuvable. Connectez-vous avec un compte du groupe admin pour gérer les utilisateurs.'
-        );
-      }
-      return Promise.all([
-        state.client.listDimensions(sys.database, ep),
-        state.client.listCubes(sys.database, ep),
-      ]).then(function (both) {
-        var dims = both[0];
-        var cubes = both[1];
-        var userDim = dims.filter(function (d) {
-          return String(d.name_dimension) === USER_DIM_NAME;
-        })[0];
-        var groupDim = dims.filter(function (d) {
-          return String(d.name_dimension) === GROUP_DIM_NAME;
-        })[0];
-        var ugCube = cubes.filter(function (c) {
-          return String(c.name_cube) === USER_GROUP_CUBE_NAME;
-        })[0];
-        if (!userDim) throw new Error('Dimension #_USER_ introuvable.');
-        if (!groupDim) throw new Error('Dimension #_GROUP_ introuvable.');
-        if (!ugCube) throw new Error('Cube #_USER_GROUP introuvable.');
-        state.serverUsersCtx = {
-          databaseId: sys.database,
-          userDimensionId: userDim.dimension,
-          groupDimensionId: groupDim.dimension,
-          userGroupCubeId: ugCube.cube,
-        };
-        return state.serverUsersCtx;
+  function loadTree() {
+    return state.client.listDatabases().then(function (dbs) {
+      // P0 : masquer System (droits / users = P1)
+      state.databases = dbs.filter(function (d) {
+        return String(d.name_database).toLowerCase() !== 'system';
       });
-    });
-  }
-
-  function usersModalSetError(msg) {
-    var errEl = $('users-modal-error');
-    if (!errEl) return;
-    if (msg) {
-      errEl.textContent = msg;
-      errEl.classList.remove('d-none');
-    } else {
-      errEl.textContent = '';
-      errEl.classList.add('d-none');
-    }
-  }
-
-  function usersModalSetLoading(on) {
-    var elLoad = $('users-modal-loading');
-    if (elLoad) elLoad.classList.toggle('d-none', !on);
-  }
-
-  function refreshServerUsersList() {
-    usersModalSetError('');
-    if (!state.client || !state.isAdmin) return Promise.resolve();
-    usersModalSetLoading(true);
-    var ul = $('users-list');
-    if (ul) ul.innerHTML = '';
-    return resolveServerUsersContext()
-      .then(function (ctx) {
-        return state.client.listElements(ctx.databaseId, ctx.userDimensionId);
-      })
-      .then(function (rows) {
-        usersModalSetLoading(false);
-        if (!ul) return;
-        ul.innerHTML = '';
-        rows
-          .slice()
-          .sort(function (a, b) {
-            return String(a.name_element).localeCompare(String(b.name_element), 'fr', { sensitivity: 'base' });
-          })
-          .forEach(function (r) {
-            var li = el('li', 'list-group-item d-flex align-items-center gap-2 py-2');
-            var main = el('span', 'flex-grow-1 text-break small');
-            main.textContent = r.name_element;
-            li.appendChild(main);
-            var prot = isProtectedServerUser(r.name_element);
-            var selfUser =
-              state.username && String(state.username).toLowerCase() === String(r.name_element).toLowerCase();
-            if (!prot && !selfUser) {
-              var btn = el('button', 'btn btn-sm btn-outline-danger rounded-circle list-row-delete flex-shrink-0');
-              btn.type = 'button';
-              btn.title = 'Supprimer';
-              btn.setAttribute('aria-label', 'Supprimer l’utilisateur');
-              btn.textContent = '−';
-              btn.addEventListener('click', function () {
-                deleteServerUser(r);
-              });
-              li.appendChild(btn);
-            }
-            ul.appendChild(li);
-          });
-      })
-      .catch(function (e) {
-        usersModalSetLoading(false);
-        usersModalSetError(e.message || String(e));
-      });
-  }
-
-  function deleteServerUser(row) {
-    if (!window.confirm('Supprimer l’utilisateur « ' + row.name_element + ' » ?')) return;
-    usersModalSetError('');
-    resolveServerUsersContext()
-      .then(function (ctx) {
-        return state.client.destroyElement(ctx.databaseId, ctx.userDimensionId, row.element);
-      })
-      .then(function () {
-        clearServerUsersCtx();
-        return refreshServerUsersList();
-      })
-      .catch(function (e) {
-        usersModalSetError(e.message || String(e));
-      });
-  }
-
-  function assignNewUserViewerGroup(userElementId) {
-    if (!state.client.replaceCell) return Promise.resolve();
-    return resolveServerUsersContext().then(function (ctx) {
-      return state.client.listElements(ctx.databaseId, ctx.groupDimensionId).then(function (gRows) {
-        var viewer = gRows.filter(function (g) {
-          return String(g.name_element).toLowerCase() === 'viewer';
-        })[0];
-        if (!viewer) return;
-        return state.client.replaceCell(
-          ctx.databaseId,
-          ctx.userGroupCubeId,
-          String(userElementId) + ',' + String(viewer.element),
-          '1',
-          { splash: '0' }
-        );
-      });
-    });
-  }
-
-  /** Palo n’a pas de cube « user/role » : ouvrir la base System pour #_USER_GROUP et #_GROUP_ROLE. */
-  function openSystemDatabaseInColumns() {
-    if (!state.client) return Promise.resolve();
-    usersModalSetError('');
-    return state.client.listDatabases(serverExplorerListParams()).then(function (rows) {
-      var sys = rows.filter(function (d) {
-        return String(d.name_database) === SYSTEM_DB_NAME;
-      })[0];
-      if (!sys) {
-        usersModalSetError('Base « System » introuvable (compte admin requis).');
-        return;
-      }
-      hideModal('modalUsers');
-      selectDatabase(sys);
-      var appEl = $('app');
-      if (appEl) {
-        requestAnimationFrame(function () {
-          appEl.scrollLeft = appEl.scrollWidth;
-        });
-      }
-    }).catch(function (e) {
-      usersModalSetError(e.message || String(e));
-    });
-  }
-
-  function bindServerUsers() {
-    var modal = $('modalUsers');
-    if (modal) {
-      modal.addEventListener('show.bs.modal', function () {
-        if (!state.isAdmin) return;
-        clearServerUsersCtx();
-        refreshServerUsersList();
-      });
-    }
-    var btnOpenSys = $('btn-open-system-db');
-    if (btnOpenSys) {
-      btnOpenSys.addEventListener('click', function () {
-        openSystemDatabaseInColumns();
-      });
-    }
-    var btnCreate = $('btn-server-user-create');
-    if (btnCreate) {
-      btnCreate.addEventListener('click', function () {
-        usersModalSetError('');
-        var inpName = $('inp-new-server-user');
-        var inpPass = $('inp-new-server-user-pass');
-        var name = (inpName && inpName.value.trim()) || '';
-        var pass = (inpPass && inpPass.value) || '';
-        if (!name) {
-          usersModalSetError('Indiquez un identifiant.');
-          return;
-        }
-        if (!pass) {
-          usersModalSetError('Indiquez un mot de passe initial.');
-          return;
-        }
-        if (isProtectedServerUser(name)) {
-          usersModalSetError('Cet identifiant est réservé au système.');
-          return;
-        }
-        btnCreate.disabled = true;
-        clearServerUsersCtx();
-        resolveServerUsersContext()
-          .then(function (ctx) {
-            return state.client.createElement(ctx.databaseId, ctx.userDimensionId, name, 2, undefined, undefined);
-          })
-          .then(function (created) {
-            if (typeof state.client.changePassword !== 'function') {
-              throw new Error('Client API incomplet : rechargez la page (api.js).');
-            }
-            return state.client.changePassword(name, pass).then(function () {
-              return created;
+      return Promise.all(
+        state.databases.map(function (db) {
+          return Promise.all([
+            state.client.listDimensions(db.database),
+            state.client.listCubes(db.database),
+          ]).then(function (pair) {
+            db._dimensions = pair[0].filter(function (dim) {
+              var n = dim.name_dimension || '';
+              return n.charAt(0) !== '#';
             });
-          })
-          .then(function (created) {
-            return assignNewUserViewerGroup(created.element).catch(function () {
-              /* droits / splash : le compte existe quand même, groupe à ajuster dans #_USER_GROUP si besoin */
+            db._cubes = pair[1].filter(function (c) {
+              var n = c.name_cube || '';
+              return n.charAt(0) !== '#';
             });
-          })
-          .then(function () {
-            if (inpName) inpName.value = '';
-            if (inpPass) inpPass.value = '';
-            clearServerUsersCtx();
-            return refreshServerUsersList();
-          })
-          .catch(function (e) {
-            usersModalSetError(e.message || String(e));
-          })
-          .then(function () {
-            btnCreate.disabled = false;
           });
-      });
+        })
+      );
+    });
+  }
+
+  function renderTree() {
+    var root = $('tree');
+    root.innerHTML = '';
+    state.databases.forEach(function (db) {
+      root.appendChild(renderDbNode(db));
+    });
+    if (!state.databases.length) {
+      var li = document.createElement('li');
+      li.className = 'muted';
+      li.style.padding = '0.5rem';
+      li.textContent = 'Aucune base. Créez-en une avec « + Base ».';
+      root.appendChild(li);
     }
   }
 
-  function openConsolidationPanel(node) {
-    if (!isNormalDimensionRow(state.dimension)) {
-      var colHide = $('col-consolidate');
-      if (colHide) colHide.classList.add('d-none');
-      return;
+  function renderDbNode(db) {
+    var key = treeKey(['db', db.database]);
+    var open = isOpen(key);
+    var li = document.createElement('li');
+
+    var row = document.createElement('div');
+    row.className = 'tree-item';
+    if (state.selection && state.selection.type === 'database' && state.selection.databaseId === db.database) {
+      row.classList.add('active');
     }
-    state.consolidationAnchorElement = node || null;
-    state.excludeFromConsolidationPick = node && node.element != null ? String(node.element) : null;
-    if (state.lastElementRows) {
-      refreshConsolidationPickerFromRows(state.lastElementRows);
+    row.innerHTML =
+      '<button type="button" class="tree-twist">' +
+      (open ? '▼' : '▶') +
+      '</button>' +
+      '<span class="tree-icon">🗄</span>' +
+      '<span class="tree-label"></span>';
+    row.querySelector('.tree-label').textContent = db.name_database;
+    row.querySelector('.tree-twist').addEventListener('click', function (e) {
+      e.stopPropagation();
+      setOpen(key, !open);
+      renderTree();
+    });
+    row.addEventListener('click', function () {
+      selectNode({
+        type: 'database',
+        databaseId: db.database,
+        databaseName: db.name_database,
+      });
+    });
+    li.appendChild(row);
+
+    if (open) {
+      var kids = document.createElement('ul');
+      kids.appendChild(
+        renderFolderNode(db, 'dimensions', 'Dimensions', '📐', db._dimensions || [], function (dim) {
+          return {
+            type: 'dimension',
+            databaseId: db.database,
+            databaseName: db.name_database,
+            dimensionId: dim.dimension,
+            dimensionName: dim.name_dimension,
+          };
+        })
+      );
+      kids.appendChild(
+        renderFolderNode(db, 'cubes', 'Cubes', '📦', db._cubes || [], function (cube) {
+          return {
+            type: 'cube',
+            databaseId: db.database,
+            databaseName: db.name_database,
+            cubeId: cube.cube,
+            cubeName: cube.name_cube,
+          };
+        })
+      );
+      li.appendChild(kids);
     }
-    var colCons = $('col-consolidate');
-    var ctitle = $('consolidate-title');
-    if (ctitle && state.dimension) {
-      var suffix = node && node.name_element != null ? ' — ' + node.name_element : '';
-      ctitle.textContent = 'Consolidation — ' + state.dimension.name_dimension + suffix;
-    }
-    if (colCons) {
-      colCons.classList.remove('d-none');
-      revealColumn(colCons);
-    }
+    return li;
   }
 
-  function renderTree(ul, byId, roots) {
-    roots.forEach(function (id) {
-      var node = byId[id];
-      if (!node) return;
-      var li = el('li', 'list-group-item py-2');
-      li.dataset.elementId = String(node.element);
-      var row = el('div', 'd-flex align-items-start gap-1');
-      var main = el('div', 'list-group-item-action list-row-main flex-grow-1 min-width-0');
-      var line = el('span', 'd-inline-flex flex-wrap align-items-baseline gap-1');
-      line.innerHTML =
-        '<span class="name">' +
-        escapeHtml(node.name_element) +
-        '</span>' +
-        '<span class="meta text-muted small">(' +
-        elementTypeLabel(node.type) +
-        ' · id ' +
-        escapeHtml(node.element) +
-        ')</span>';
-      main.appendChild(line);
-      main.addEventListener('click', function (ev) {
-        ev.stopPropagation();
-        document.querySelectorAll('#element-tree li.list-group-item').forEach(function (x) {
-          x.classList.remove('active');
-        });
-        li.classList.add('active');
-        openConsolidationPanel(node);
+  function renderFolderNode(db, folder, label, icon, items, toSel) {
+    var key = treeKey(['db', db.database, folder]);
+    var open = isOpen(key);
+    var li = document.createElement('li');
+    var row = document.createElement('div');
+    row.className = 'tree-item';
+    if (
+      state.selection &&
+      state.selection.type === 'folder' &&
+      state.selection.databaseId === db.database &&
+      state.selection.folder === folder
+    ) {
+      row.classList.add('active');
+    }
+    row.innerHTML =
+      '<button type="button" class="tree-twist">' +
+      (open ? '▼' : '▶') +
+      '</button>' +
+      '<span class="tree-icon">' +
+      icon +
+      '</span>' +
+      '<span class="tree-label"></span>';
+    row.querySelector('.tree-label').textContent = label + ' (' + items.length + ')';
+    row.querySelector('.tree-twist').addEventListener('click', function (e) {
+      e.stopPropagation();
+      setOpen(key, !open);
+      renderTree();
+    });
+    row.addEventListener('click', function () {
+      selectNode({
+        type: 'folder',
+        folder: folder,
+        databaseId: db.database,
+        databaseName: db.name_database,
       });
-      row.appendChild(main);
-      if (isDimensionElementsMutable(state.dimension)) {
-        var delEl = el('button', 'btn btn-sm btn-outline-danger rounded-circle list-row-delete flex-shrink-0');
-        delEl.type = 'button';
-        delEl.setAttribute('aria-label', 'Supprimer l’élément');
-        delEl.title = 'Supprimer';
-        delEl.textContent = '−';
-        delEl.addEventListener('click', function (ev) {
-          ev.stopPropagation();
-          deleteElementRow(node);
+    });
+    li.appendChild(row);
+
+    if (open) {
+      var ul = document.createElement('ul');
+      items.forEach(function (it) {
+        var child = document.createElement('li');
+        var crow = document.createElement('div');
+        crow.className = 'tree-item';
+        var sel = toSel(it);
+        if (selectionEquals(state.selection, sel)) crow.classList.add('active');
+        crow.innerHTML = '<span class="tree-twist"></span><span class="tree-icon">•</span><span class="tree-label"></span>';
+        crow.querySelector('.tree-label').textContent =
+          folder === 'dimensions' ? it.name_dimension : it.name_cube;
+        crow.addEventListener('click', function (e) {
+          e.stopPropagation();
+          selectNode(sel);
         });
-        row.appendChild(delEl);
-      }
-      li.appendChild(row);
-      var childIds = splitIds(node.children);
-      if (childIds.length) {
-        var sub = el('ul', 'list-group list-group-flush border-0 ms-3 mt-1 mb-0 ps-2 element-tree-nested');
-        renderTree(sub, byId, childIds);
-        li.appendChild(sub);
-      }
+        child.appendChild(crow);
+        ul.appendChild(child);
+      });
+      li.appendChild(ul);
+    }
+    return li;
+  }
+
+  /* ---------- Detail ---------- */
+
+  function renderDetail() {
+    var empty = $('detail-empty');
+    var panel = $('detail-panel');
+    var sel = state.selection;
+    if (!sel) {
+      empty.classList.remove('hidden');
+      panel.classList.add('hidden');
+      panel.innerHTML = '';
+      return Promise.resolve();
+    }
+    empty.classList.add('hidden');
+    panel.classList.remove('hidden');
+
+    if (sel.type === 'database') return renderDatabaseDetail(panel, sel);
+    if (sel.type === 'folder' && sel.folder === 'dimensions') return renderDimensionsFolder(panel, sel);
+    if (sel.type === 'folder' && sel.folder === 'cubes') return renderCubesFolder(panel, sel);
+    if (sel.type === 'dimension') return renderDimensionDetail(panel, sel);
+    if (sel.type === 'cube') return renderCubeDetail(panel, sel);
+    panel.innerHTML = '';
+    return Promise.resolve();
+  }
+
+  function headerHtml(title, actionsHtml) {
+    return (
+      '<div class="detail-header"><h2>' +
+      escapeHtml(title) +
+      '</h2><div class="detail-actions">' +
+      (actionsHtml || '') +
+      '</div></div>'
+    );
+  }
+
+  function renderDatabaseDetail(panel, sel) {
+    panel.innerHTML =
+      headerHtml(sel.databaseName, [
+        '<button type="button" class="btn btn-small" id="act-rename-db">Renommer</button>',
+        '<button type="button" class="btn btn-small btn-danger" id="act-del-db">Supprimer</button>',
+        '<button type="button" class="btn btn-small btn-primary" id="act-new-dim">+ Dimension</button>',
+        '<button type="button" class="btn btn-small btn-primary" id="act-new-cube">+ Cube</button>',
+      ].join('')) +
+      '<div class="panel"><h3>Base de données</h3><p class="muted">Créez des dimensions (ex. Mesures, Produits), peuplez-les d’éléments, puis créez un cube (≥ 2 dimensions).</p></div>';
+
+    $('act-rename-db').onclick = function () {
+      promptName('Renommer la base', 'Nouveau nom', sel.databaseName).then(function (name) {
+        if (!name) return;
+        return state.client.renameDatabase(sel.databaseId, name).then(function () {
+          toast('Base renommée.', 'ok');
+          return refreshAll({ type: 'database', databaseId: sel.databaseId, databaseName: name });
+        });
+      }).catch(showErr);
+    };
+    $('act-del-db').onclick = function () {
+      if (!confirmAction('Supprimer la base « ' + sel.databaseName + ' » ?')) return;
+      state.client
+        .destroyDatabase(sel.databaseId)
+        .then(function () {
+          toast('Base supprimée.', 'ok');
+          state.selection = null;
+          return refreshAll(null);
+        })
+        .catch(showErr);
+    };
+    $('act-new-dim').onclick = function () {
+      return createDimensionFlow(sel);
+    };
+    $('act-new-cube').onclick = function () {
+      return createCubeFlow(sel);
+    };
+    return Promise.resolve();
+  }
+
+  function renderDimensionsFolder(panel, sel) {
+    var db = findDb(sel.databaseId);
+    var dims = (db && db._dimensions) || [];
+    panel.innerHTML =
+      headerHtml('Dimensions — ' + sel.databaseName, '<button type="button" class="btn btn-small btn-primary" id="act-new-dim">+ Dimension</button>') +
+      '<div class="panel"><ul class="meta-list" id="dim-list"></ul></div>';
+    var ul = $('dim-list');
+    dims.forEach(function (d) {
+      var li = document.createElement('li');
+      var a = document.createElement('a');
+      a.href = '#';
+      a.textContent = d.name_dimension;
+      a.onclick = function (e) {
+        e.preventDefault();
+        selectNode({
+          type: 'dimension',
+          databaseId: sel.databaseId,
+          databaseName: sel.databaseName,
+          dimensionId: d.dimension,
+          dimensionName: d.name_dimension,
+        });
+      };
+      li.appendChild(a);
       ul.appendChild(li);
     });
+    if (!dims.length) ul.innerHTML = '<li class="muted">Aucune dimension.</li>';
+    $('act-new-dim').onclick = function () {
+      return createDimensionFlow(sel);
+    };
+    return Promise.resolve();
   }
 
-  function splitIds(s) {
-    if (!s) return [];
-    return String(s)
-      .split(',')
-      .map(function (x) {
-        return x.trim();
-      })
-      .filter(Boolean);
+  function renderCubesFolder(panel, sel) {
+    var db = findDb(sel.databaseId);
+    var cubes = (db && db._cubes) || [];
+    panel.innerHTML =
+      headerHtml('Cubes — ' + sel.databaseName, '<button type="button" class="btn btn-small btn-primary" id="act-new-cube">+ Cube</button>') +
+      '<div class="panel"><ul class="meta-list" id="cube-list"></ul></div>';
+    var ul = $('cube-list');
+    cubes.forEach(function (c) {
+      var li = document.createElement('li');
+      var a = document.createElement('a');
+      a.href = '#';
+      a.textContent = c.name_cube;
+      a.onclick = function (e) {
+        e.preventDefault();
+        selectNode({
+          type: 'cube',
+          databaseId: sel.databaseId,
+          databaseName: sel.databaseName,
+          cubeId: c.cube,
+          cubeName: c.name_cube,
+        });
+      };
+      li.appendChild(a);
+      ul.appendChild(li);
+    });
+    if (!cubes.length) ul.innerHTML = '<li class="muted">Aucun cube.</li>';
+    $('act-new-cube').onclick = function () {
+      return createCubeFlow(sel);
+    };
+    return Promise.resolve();
+  }
+
+  function renderDimensionDetail(panel, sel) {
+    panel.innerHTML =
+      headerHtml(sel.dimensionName, [
+        '<button type="button" class="btn btn-small" id="act-rename-dim">Renommer</button>',
+        '<button type="button" class="btn btn-small btn-danger" id="act-del-dim">Supprimer</button>',
+        '<button type="button" class="btn btn-small btn-primary" id="act-new-el">+ Élément</button>',
+        '<button type="button" class="btn btn-small" id="act-consolidate">Consolidation…</button>',
+      ].join('')) +
+      '<div class="panel"><h3>Éléments</h3><div id="el-host" class="muted">Chargement…</div></div>';
+
+    $('act-rename-dim').onclick = function () {
+      promptName('Renommer la dimension', 'Nouveau nom', sel.dimensionName).then(function (name) {
+        if (!name) return;
+        return state.client.renameDimension(sel.databaseId, sel.dimensionId, name).then(function () {
+          toast('Dimension renommée.', 'ok');
+          return refreshAll({
+            type: 'dimension',
+            databaseId: sel.databaseId,
+            databaseName: sel.databaseName,
+            dimensionId: sel.dimensionId,
+            dimensionName: name,
+          });
+        });
+      }).catch(showErr);
+    };
+    $('act-del-dim').onclick = function () {
+      if (!confirmAction('Supprimer la dimension « ' + sel.dimensionName + ' » ?')) return;
+      state.client
+        .destroyDimension(sel.databaseId, sel.dimensionId)
+        .then(function () {
+          toast('Dimension supprimée.', 'ok');
+          return refreshAll({
+            type: 'folder',
+            folder: 'dimensions',
+            databaseId: sel.databaseId,
+            databaseName: sel.databaseName,
+          });
+        })
+        .catch(showErr);
+    };
+    $('act-new-el').onclick = function () {
+      return createElementFlow(sel);
+    };
+    $('act-consolidate').onclick = function () {
+      return consolidateFlow(sel);
+    };
+
+    return state.client.listElements(sel.databaseId, sel.dimensionId).then(function (rows) {
+      state.elementRows = rows;
+      renderElementTree($('el-host'), rows);
+    });
   }
 
   function elementTypeLabel(t) {
-    var m = { '1': 'num', '2': 'str', '4': 'consolidé' };
-    return m[String(t)] || String(t);
+    if (t === ELEMENT_NUMERIC) return 'N';
+    if (t === ELEMENT_STRING) return 'T';
+    if (t === ELEMENT_CONSOLIDATED) return 'C';
+    return String(t);
   }
 
-  function buildElementTree(rows) {
+  function buildElementForest(rows) {
     var byId = {};
     rows.forEach(function (r) {
-      byId[String(r.element)] = r;
+      byId[r.element] = Object.assign({}, r, { _children: [] });
     });
     var roots = [];
     rows.forEach(function (r) {
-      var np = parseInt(r.number_parents, 10);
-      if (!np) roots.push(String(r.element));
+      var parents = String(r.parents || '')
+        .split(',')
+        .map(function (s) {
+          return s.trim();
+        })
+        .filter(Boolean);
+      if (!parents.length) {
+        roots.push(byId[r.element]);
+      } else {
+        parents.forEach(function (pid) {
+          if (byId[pid]) byId[pid]._children.push(byId[r.element]);
+          else roots.push(byId[r.element]);
+        });
+      }
     });
-    roots.sort(function (a, b) {
-      return parseInt(byId[a].position, 10) - parseInt(byId[b].position, 10);
+    // dedupe roots
+    var seen = {};
+    return roots.filter(function (n) {
+      if (seen[n.element]) return false;
+      seen[n.element] = true;
+      return true;
     });
-    return { byId: byId, roots: roots };
   }
 
-  function deleteDimensionRow(d) {
-    clearMessages();
-    if (!state.client || !state.database || !isNormalDimensionRow(d)) return;
-    if (!window.confirm('Supprimer la dimension « ' + d.name_dimension + ' » ?')) return;
-    state.client
-      .destroyDimension(state.database.database, d.dimension)
-      .then(function () {
-        showOk('Dimension supprimée.');
-        if (state.dimension && String(state.dimension.dimension) === String(d.dimension)) {
-          state.dimension = null;
-          state.attributeDimension = null;
-          state.lastElementRows = null;
-          state.excludeFromConsolidationPick = null;
-          state.consolidationAnchorElement = null;
-          $('col-detail').classList.add('d-none');
-          var colC = $('col-consolidate');
-          if (colC) colC.classList.add('d-none');
-        }
-        updateToolbarButtons();
-        return refreshDimensionsAndCubes();
-      })
-      .catch(function (e) {
-        showError(e.message || String(e));
-      });
-  }
-
-  function deleteCubeRow(c) {
-    clearMessages();
-    if (!state.client || !state.database || !isNormalCubeRow(c)) return;
-    if (!window.confirm('Supprimer le cube « ' + c.name_cube + ' » ?')) return;
-    state.client
-      .destroyCube(state.database.database, c.cube)
-      .then(function () {
-        showOk('Cube supprimé.');
-        if (state.cube && String(state.cube.cube) === String(c.cube)) {
-          state.cube = null;
-          $('col-detail').classList.add('d-none');
-        }
-        updateToolbarButtons();
-        return refreshDimensionsAndCubes();
-      })
-      .catch(function (e) {
-        showError(e.message || String(e));
-      });
-  }
-
-  function deleteAttributeElementRow(row) {
-    clearMessages();
-    if (!state.client || !state.database || !state.attributeDimension || !isDimensionElementsMutable(state.attributeDimension)) {
+  function renderElementTree(host, rows) {
+    if (!rows.length) {
+      host.innerHTML = '<p class="muted">Aucun élément. Les « mesures » sont des éléments numériques d’une dimension (ex. Mesures).</p>';
       return;
     }
-    if (!window.confirm('Supprimer l’attribut « ' + row.name_element + ' » ?')) return;
-    destroyElementRequest(state.client, state.database.database, state.attributeDimension.dimension, row.element)
-      .then(function () {
-        showOk('Attribut supprimé.');
-        return refreshAttributePanel();
-      })
-      .catch(function (e) {
-        showError(e.message || String(e));
-      });
+    var forest = buildElementForest(rows);
+    var ul = document.createElement('ul');
+    ul.className = 'element-tree';
+    forest.forEach(function (n) {
+      ul.appendChild(renderElementNode(n));
+    });
+    host.innerHTML = '';
+    host.appendChild(ul);
   }
 
-  function deleteElementRow(node) {
-    clearMessages();
-    if (!state.client || !state.database || !state.dimension || !isDimensionElementsMutable(state.dimension)) return;
-    if (!window.confirm('Supprimer l’élément « ' + node.name_element + ' » ?')) return;
-    destroyElementRequest(state.client, state.database.database, state.dimension.dimension, node.element)
-      .then(function () {
-        showOk('Élément supprimé.');
-        if (state.consolidationAnchorElement && String(state.consolidationAnchorElement.element) === String(node.element)) {
-          state.consolidationAnchorElement = null;
-          state.excludeFromConsolidationPick = null;
-          var colC = $('col-consolidate');
-          if (colC) colC.classList.add('d-none');
-        }
-        return refreshElements();
-      })
-      .catch(function (e) {
-        showError(e.message || String(e));
+  function renderElementNode(node) {
+    var li = document.createElement('li');
+    var row = document.createElement('div');
+    row.className = 'element-row';
+    if (state.selectedElementId === node.element) row.classList.add('selected');
+    row.innerHTML =
+      '<span class="badge">' +
+      elementTypeLabel(node.type) +
+      '</span><span class="tree-label"></span>' +
+      '<button type="button" class="btn btn-small" data-act="rename">Renommer</button>' +
+      '<button type="button" class="btn btn-small btn-danger" data-act="del">Suppr.</button>';
+    row.querySelector('.tree-label').textContent = node.name_element;
+    row.addEventListener('click', function (e) {
+      if (e.target.getAttribute('data-act')) return;
+      state.selectedElementId = node.element;
+      document.querySelectorAll('.element-row.selected').forEach(function (el) {
+        el.classList.remove('selected');
       });
-  }
-
-  function deleteRuleRow(r) {
-    clearMessages();
-    if (!state.client || !state.database || !state.cube || !isNormalCubeRow(state.cube)) return;
-    if (!window.confirm('Supprimer cette règle ?')) return;
-    state.client
-      .destroyRule(state.database.database, state.cube.cube, r.rule)
-      .then(function () {
-        showOk('Règle supprimée.');
-        return refreshRules();
-      })
-      .catch(function (e) {
-        showError(e.message || String(e));
-      });
-  }
-
-  function refreshDatabases() {
-    if (!state.client) return Promise.resolve();
-    var dbParams = useExtendedLists() ? serverExplorerListParams() : undefined;
-    return state.client.listDatabases(dbParams).then(function (rows) {
-      var list = $('db-list');
-      list.innerHTML = '';
-      rows.forEach(function (db) {
-        var li = el('li', 'list-group-item list-group-item-action');
-        li.textContent = db.name_database + ' (' + db.database + ')';
-        li.dataset.dbId = db.database;
-        if (state.database && String(state.database.database) === String(db.database)) {
-          li.classList.add('active');
-        }
-        li.addEventListener('click', function () {
-          selectDatabase(db);
+      row.classList.add('selected');
+    });
+    row.querySelector('[data-act="rename"]').onclick = function (e) {
+      e.stopPropagation();
+      var sel = state.selection;
+      promptName('Renommer l’élément', 'Nouveau nom', node.name_element).then(function (name) {
+        if (!name) return;
+        return state.client.renameElement(sel.databaseId, sel.dimensionId, node.element, name).then(function () {
+          toast('Élément renommé.', 'ok');
+          return renderDetail();
         });
-        list.appendChild(li);
+      }).catch(showErr);
+    };
+    row.querySelector('[data-act="del"]').onclick = function (e) {
+      e.stopPropagation();
+      if (!confirmAction('Supprimer l’élément « ' + node.name_element + ' » ?')) return;
+      var sel = state.selection;
+      state.client
+        .destroyElement(sel.databaseId, sel.dimensionId, node.element)
+        .then(function () {
+          toast('Élément supprimé.', 'ok');
+          return renderDetail();
+        })
+        .catch(showErr);
+    };
+    li.appendChild(row);
+    if (node._children && node._children.length) {
+      var ul = document.createElement('ul');
+      node._children.forEach(function (c) {
+        ul.appendChild(renderElementNode(c));
       });
-    });
-  }
-
-  function selectDatabase(db) {
-    state.database = db;
-    state.dimension = null;
-    state.cube = null;
-    state.attributeDimension = null;
-    state.detailMode = null;
-    state.lastElementRows = null;
-    state.excludeFromConsolidationPick = null;
-    state.consolidationAnchorElement = null;
-    state.client.clearDbToken();
-    document.querySelectorAll('#db-list .list-group-item').forEach(function (x) {
-      x.classList.toggle('active', String(x.dataset.dbId) === String(db.database));
-    });
-    $('col-db-content').classList.remove('d-none');
-    $('col-detail').classList.add('d-none');
-    var colCons = $('col-consolidate');
-    if (colCons) colCons.classList.add('d-none');
-    var sysHint = $('db-content-system-hint');
-    if (sysHint) {
-      sysHint.classList.toggle('d-none', String(db.name_database) !== SYSTEM_DB_NAME);
+      li.appendChild(ul);
     }
-    updateToolbarButtons();
-    return refreshDimensionsAndCubes();
+    return li;
   }
 
-  function refreshDimensionsAndCubes() {
-    if (!state.client || !state.database) return Promise.resolve();
-    var dbId = state.database.database;
-    var extra = dbListParamsForExplorer();
-    return Promise.all([
-      state.client.listDimensions(dbId, extra || undefined),
-      state.client.listCubes(dbId, extra || undefined),
-    ]).then(function (both) {
-      var dims = both[0];
-      var cubes = both[1];
-      var dimList = $('dim-list');
-      dimList.innerHTML = '';
-      dims.forEach(function (d) {
-        if (!useExtendedLists() && !isDimensionRowInSimpleView(d)) return;
-        var li = el('li', 'list-group-item d-flex align-items-center gap-1 py-2 px-2');
-        li.dataset.dimId = d.dimension;
-        if (state.dimension && String(state.dimension.dimension) === String(d.dimension)) {
-          li.classList.add('active');
-        }
-        var main = el('div', 'list-group-item-action list-row-main flex-grow-1 text-truncate list-item-icon-dim');
-        main.textContent = d.name_dimension + dimensionTypeSuffix(d.type);
-        main.addEventListener('click', function (ev) {
-          ev.stopPropagation();
-          selectDimension(d);
-        });
-        li.appendChild(main);
-        if (isNormalDimensionRow(d)) {
-          var delDim = el('button', 'btn btn-sm btn-outline-danger rounded-circle list-row-delete flex-shrink-0');
-          delDim.type = 'button';
-          delDim.setAttribute('aria-label', 'Supprimer la dimension');
-          delDim.title = 'Supprimer';
-          delDim.textContent = '−';
-          delDim.addEventListener('click', function (ev) {
-            ev.stopPropagation();
-            deleteDimensionRow(d);
+  function renderCubeDetail(panel, sel) {
+    panel.innerHTML =
+      headerHtml(sel.cubeName, [
+        '<button type="button" class="btn btn-small" id="act-rename-cube">Renommer</button>',
+        '<button type="button" class="btn btn-small btn-danger" id="act-clear-cube">Vider les valeurs</button>',
+        '<button type="button" class="btn btn-small btn-danger" id="act-del-cube">Supprimer</button>',
+      ].join('')) +
+      '<div class="panel"><h3>Dimensions du cube</h3><ol id="cube-dims" class="meta-list"></ol><p id="cube-meta" class="muted"></p></div>';
+
+    $('act-rename-cube').onclick = function () {
+      promptName('Renommer le cube', 'Nouveau nom', sel.cubeName).then(function (name) {
+        if (!name) return;
+        return state.client.renameCube(sel.databaseId, sel.cubeId, name).then(function () {
+          toast('Cube renommé.', 'ok');
+          return refreshAll({
+            type: 'cube',
+            databaseId: sel.databaseId,
+            databaseName: sel.databaseName,
+            cubeId: sel.cubeId,
+            cubeName: name,
           });
-          li.appendChild(delDim);
-        }
-        dimList.appendChild(li);
-      });
-      var cubeList = $('cube-list');
-      cubeList.innerHTML = '';
-      cubes.forEach(function (c) {
-        if (!useExtendedLists() && !isCubeRowInSimpleView(c)) return;
-        var li = el('li', 'list-group-item d-flex align-items-center gap-1 py-2 px-2');
-        li.dataset.cubeId = c.cube;
-        if (state.cube && String(state.cube.cube) === String(c.cube)) {
-          li.classList.add('active');
-        }
-        var mainC = el('div', 'list-group-item-action list-row-main flex-grow-1 text-truncate list-item-icon-cube');
-        mainC.textContent = c.name_cube + cubeTypeSuffix(c.type);
-        mainC.addEventListener('click', function (ev) {
-          ev.stopPropagation();
-          selectCube(c);
         });
-        li.appendChild(mainC);
-        if (isNormalCubeRow(c)) {
-          var delCube = el('button', 'btn btn-sm btn-outline-danger rounded-circle list-row-delete flex-shrink-0');
-          delCube.type = 'button';
-          delCube.setAttribute('aria-label', 'Supprimer le cube');
-          delCube.title = 'Supprimer';
-          delCube.textContent = '−';
-          delCube.addEventListener('click', function (ev) {
-            ev.stopPropagation();
-            deleteCubeRow(c);
+      }).catch(showErr);
+    };
+    $('act-clear-cube').onclick = function () {
+      if (!confirmAction('Vider toutes les valeurs du cube « ' + sel.cubeName + ' » ?')) return;
+      state.client
+        .clearCube(sel.databaseId, sel.cubeId)
+        .then(function () {
+          toast('Cube vidé.', 'ok');
+          return renderDetail();
+        })
+        .catch(showErr);
+    };
+    $('act-del-cube').onclick = function () {
+      if (!confirmAction('Supprimer le cube « ' + sel.cubeName + ' » ?')) return;
+      state.client
+        .destroyCube(sel.databaseId, sel.cubeId)
+        .then(function () {
+          toast('Cube supprimé.', 'ok');
+          return refreshAll({
+            type: 'folder',
+            folder: 'cubes',
+            databaseId: sel.databaseId,
+            databaseName: sel.databaseName,
           });
-          li.appendChild(delCube);
-        }
-        cubeList.appendChild(li);
+        })
+        .catch(showErr);
+    };
+
+    var db = findDb(sel.databaseId);
+    return state.client.cubeInfo(sel.databaseId, sel.cubeId).then(function (info) {
+      var ids = String(info.dimensions || '')
+        .split(',')
+        .map(function (s) {
+          return s.trim();
+        })
+        .filter(Boolean);
+      var ol = $('cube-dims');
+      ol.innerHTML = '';
+      ids.forEach(function (id) {
+        var dim = ((db && db._dimensions) || []).find(function (d) {
+          return String(d.dimension) === String(id);
+        });
+        var li = document.createElement('li');
+        li.textContent = dim ? dim.name_dimension : 'dimension #' + id;
+        ol.appendChild(li);
       });
+      $('cube-meta').textContent =
+        'Cellules remplies : ' +
+        (info.number_filled_cells != null ? info.number_filled_cells : '—') +
+        ' / ' +
+        (info.number_cells != null ? info.number_cells : '—');
     });
   }
 
-  function selectDimension(d) {
-    state.dimension = d;
-    state.cube = null;
-    state.detailMode = 'elements';
-    state.excludeFromConsolidationPick = null;
-    state.consolidationAnchorElement = null;
-    state.lastElementRows = null;
-    document.querySelectorAll('#dim-list .list-group-item').forEach(function (x) {
-      x.classList.toggle('active', String(x.dataset.dimId) === String(d.dimension));
-    });
-    document.querySelectorAll('#cube-list .list-group-item').forEach(function (x) {
-      x.classList.remove('active');
-    });
-    $('col-detail').classList.remove('d-none');
-    $('detail-title').textContent = 'Éléments — ' + d.name_dimension;
-    var colCons = $('col-consolidate');
-    if (colCons) colCons.classList.add('d-none');
-    $('detail-elements').classList.remove('d-none');
-    $('detail-rules').classList.add('d-none');
-    updateToolbarButtons();
-    return refreshElements().then(function () {
-      return refreshAttributePanel();
+  function findDb(id) {
+    return state.databases.find(function (d) {
+      return String(d.database) === String(id);
     });
   }
 
-  /** Liste des noms d’attributs (éléments de `#_Dimension_`) pour une dimension métier sélectionnée. */
-  function refreshAttributePanel() {
-    var wrap = $('detail-attributes');
-    var ul = $('attr-element-list');
-    var noneEl = $('attr-panel-none');
-    var errEl = $('attr-panel-error');
-    var nameLabel = $('attr-dim-name-label');
-    state.attributeDimension = null;
-    updateToolbarButtons();
-    if (errEl) {
-      errEl.textContent = '';
-      errEl.classList.add('d-none');
-    }
-    if (!wrap || !ul) return Promise.resolve();
-    if (!state.client || !state.database || !state.dimension || !isNormalDimensionRow(state.dimension)) {
-      wrap.classList.add('d-none');
+  /* ---------- Flows ---------- */
+
+  function createDimensionFlow(sel) {
+    return promptName('Nouvelle dimension', 'Nom de la dimension', '').then(function (name) {
+      if (!name) return;
+      return state.client.createDimension(sel.databaseId, name).then(function (created) {
+        toast('Dimension créée.', 'ok');
+        setOpen(treeKey(['db', sel.databaseId]), true);
+        setOpen(treeKey(['db', sel.databaseId, 'dimensions']), true);
+        return refreshAll({
+          type: 'dimension',
+          databaseId: sel.databaseId,
+          databaseName: sel.databaseName,
+          dimensionId: created.dimension,
+          dimensionName: created.name_dimension || name,
+        });
+      });
+    }).catch(showErr);
+  }
+
+  function createElementFlow(sel) {
+    return openModal(
+      'Nouvel élément',
+      '<label>Nom<input id="el-name" type="text" /></label>' +
+        '<label>Type<select id="el-type">' +
+        '<option value="1">Numérique (mesure)</option>' +
+        '<option value="2">Texte</option>' +
+        '<option value="4">Consolidé</option>' +
+        '</select></label>',
+      function () {
+        var name = ($('el-name').value || '').trim();
+        if (!name) throw new Error('Nom requis.');
+        return { name: name, type: parseInt($('el-type').value, 10) };
+      }
+    ).then(function (data) {
+      if (!data) return;
+      return state.client.createElement(sel.databaseId, sel.dimensionId, data.name, data.type).then(function () {
+        toast('Élément créé.', 'ok');
+        return renderDetail();
+      });
+    }).catch(showErr);
+  }
+
+  function consolidateFlow(sel) {
+    return state.client.listElements(sel.databaseId, sel.dimensionId).then(function (rows) {
+      var options = rows
+        .map(function (r) {
+          return '<option value="' + escapeAttr(r.element) + '">' + escapeHtml(r.name_element) + '</option>';
+        })
+        .join('');
+      return openModal(
+        'Consolidation',
+        '<p class="muted">Choisir le parent consolidé et les enfants avec poids (défaut 1).</p>' +
+          '<label>Parent<select id="cons-parent">' +
+          options +
+          '</select></label>' +
+          '<label>Enfants (Ctrl+clic)<select id="cons-children" multiple size="8">' +
+          options +
+          '</select></label>' +
+          '<label>Poids (même ordre, séparés par des virgules — optionnel)<input id="cons-weights" type="text" placeholder="1,1,1" /></label>',
+        function () {
+          var parent = $('cons-parent').value;
+          var childrenSel = Array.prototype.slice.call($('cons-children').selectedOptions).map(function (o) {
+            return o.value;
+          });
+          if (!parent) throw new Error('Parent requis.');
+          if (!childrenSel.length) throw new Error('Sélectionnez au moins un enfant.');
+          if (childrenSel.indexOf(parent) >= 0) throw new Error('Le parent ne peut pas être son propre enfant.');
+          var weightsRaw = ($('cons-weights').value || '').trim();
+          var weights = weightsRaw
+            ? weightsRaw.split(',').map(function (s) {
+                return s.trim();
+              })
+            : childrenSel.map(function () {
+                return '1';
+              });
+          if (weights.length !== childrenSel.length) throw new Error('Nombre de poids ≠ nombre d’enfants.');
+          return { parent: parent, children: childrenSel, weights: weights };
+        }
+      ).then(function (data) {
+        if (!data) return;
+        return state.client
+          .replaceElement(
+            sel.databaseId,
+            sel.dimensionId,
+            data.parent,
+            ELEMENT_CONSOLIDATED,
+            data.children.join(','),
+            data.weights.join(',')
+          )
+          .then(function () {
+            toast('Consolidation enregistrée.', 'ok');
+            return renderDetail();
+          });
+      });
+    }).catch(showErr);
+  }
+
+  function createCubeFlow(sel) {
+    var db = findDb(sel.databaseId);
+    var dims = (db && db._dimensions) || [];
+    if (dims.length < 2) {
+      toast('Il faut au moins 2 dimensions dans la base avant de créer un cube.', 'err');
       return Promise.resolve();
     }
-    wrap.classList.remove('d-none');
-    var attrDimName = attributeDimensionNameForBase(state.dimension.name_dimension);
-    if (nameLabel) nameLabel.textContent = attrDimName;
-    ul.innerHTML = '<li class="list-group-item small text-muted border-0 py-2">Chargement…</li>';
-    if (noneEl) noneEl.classList.add('d-none');
-    return state.client
-      .listDimensions(state.database.database, dimensionParamsForAttributeLookup())
-      .then(function (dims) {
-        var attrDim = dims.filter(function (x) {
-          return String(x.name_dimension) === attrDimName;
-        })[0];
-        if (!attrDim) {
-          state.attributeDimension = null;
-          ul.innerHTML = '';
-          if (noneEl) noneEl.classList.remove('d-none');
-          updateToolbarButtons();
-          return;
-        }
-        state.attributeDimension = attrDim;
-        if (noneEl) noneEl.classList.add('d-none');
-        return state.client.listElements(state.database.database, attrDim.dimension).then(function (rows) {
-          ul.innerHTML = '';
-          var mutable = isDimensionElementsMutable(attrDim);
-          rows
-            .slice()
-            .sort(function (a, b) {
-              return parseInt(a.position, 10) - parseInt(b.position, 10);
-            })
-            .forEach(function (r) {
-              var li = el('li', 'list-group-item d-flex align-items-center gap-1 py-2 px-2');
-              var main = el(
-                'div',
-                'list-row-main flex-grow-1 min-width-0 text-truncate small'
-              );
-              var line = el('span', 'd-inline-flex flex-wrap align-items-baseline gap-1');
-              line.innerHTML =
-                '<span class="name">' +
-                escapeHtml(r.name_element) +
-                '</span>' +
-                '<span class="meta text-muted small">(id ' +
-                escapeHtml(r.element) +
-                ')</span>';
-              main.appendChild(line);
-              li.appendChild(main);
-              if (mutable) {
-                var delBtn = el('button', 'btn btn-sm btn-outline-danger rounded-circle list-row-delete flex-shrink-0');
-                delBtn.type = 'button';
-                delBtn.setAttribute('aria-label', 'Supprimer l’attribut');
-                delBtn.title = 'Supprimer';
-                delBtn.textContent = '−';
-                delBtn.addEventListener('click', function (ev) {
-                  ev.stopPropagation();
-                  deleteAttributeElementRow(r);
-                });
-                li.appendChild(delBtn);
-              }
-              ul.appendChild(li);
-            });
-          if (!rows.length) {
-            var emptyLi = el('li', 'list-group-item small text-muted border-0 py-2');
-            emptyLi.textContent = 'Aucun nom d’attribut défini. Utilisez le bouton + ci-dessus.';
-            ul.appendChild(emptyLi);
-          }
-          updateToolbarButtons();
+    var leftOpts = dims
+      .map(function (d) {
+        return '<option value="' + escapeAttr(d.dimension) + '">' + escapeHtml(d.name_dimension) + '</option>';
+      })
+      .join('');
+
+    var p = openModal(
+      'Nouveau cube',
+      '<label>Nom<input id="cube-name" type="text" /></label>' +
+        '<div class="shuttle">' +
+        '<div class="shuttle-col"><span class="muted">Dimensions disponibles</span>' +
+        '<select id="cube-left" multiple size="10">' +
+        leftOpts +
+        '</select></div>' +
+        '<div class="shuttle-buttons">' +
+        '<button type="button" class="btn btn-small" id="sh-right">→</button>' +
+        '<button type="button" class="btn btn-small" id="sh-left">←</button>' +
+        '</div>' +
+        '<div class="shuttle-col"><span class="muted">Dimensions du cube (ordre = axes)</span>' +
+        '<select id="cube-right" multiple size="10"></select></div>' +
+        '<div class="shuttle-order">' +
+        '<button type="button" class="btn btn-small" id="sh-up">↑</button>' +
+        '<button type="button" class="btn btn-small" id="sh-down">↓</button>' +
+        '</div></div>',
+      function () {
+        var name = ($('cube-name').value || '').trim();
+        if (!name) throw new Error('Nom requis.');
+        var right = $('cube-right');
+        if (right.options.length < 2) throw new Error('Sélectionnez au moins 2 dimensions.');
+        var ids = Array.prototype.map.call(right.options, function (o) {
+          return o.value;
+        });
+        return { name: name, dimensionIds: ids };
+      }
+    );
+
+    // Bind shuttle after DOM inserted
+    setTimeout(function () {
+      wireShuttle();
+    }, 0);
+
+    return p
+      .then(function (data) {
+        if (!data) return;
+        return state.client.createCube(sel.databaseId, data.name, data.dimensionIds.join(',')).then(function (created) {
+          toast('Cube créé.', 'ok');
+          setOpen(treeKey(['db', sel.databaseId]), true);
+          setOpen(treeKey(['db', sel.databaseId, 'cubes']), true);
+          return refreshAll({
+            type: 'cube',
+            databaseId: sel.databaseId,
+            databaseName: sel.databaseName,
+            cubeId: created.cube,
+            cubeName: created.name_cube || data.name,
+          });
         });
       })
-      .catch(function (e) {
-        state.attributeDimension = null;
-        ul.innerHTML = '';
-        updateToolbarButtons();
-        if (errEl) {
-          errEl.textContent = e.message || String(e);
-          errEl.classList.remove('d-none');
-        }
+      .catch(showErr);
+  }
+
+  function wireShuttle() {
+    var left = $('cube-left');
+    var right = $('cube-right');
+    if (!left || !right) return;
+
+    function moveSelected(from, to) {
+      Array.prototype.slice.call(from.selectedOptions).forEach(function (opt) {
+        to.appendChild(opt);
       });
-  }
+    }
 
-  function selectCube(c) {
-    state.cube = c;
-    state.dimension = null;
-    state.attributeDimension = null;
-    state.detailMode = 'rules';
-    state.lastElementRows = null;
-    state.excludeFromConsolidationPick = null;
-    state.consolidationAnchorElement = null;
-    document.querySelectorAll('#cube-list .list-group-item').forEach(function (x) {
-      x.classList.toggle('active', String(x.dataset.cubeId) === String(c.cube));
-    });
-    document.querySelectorAll('#dim-list .list-group-item').forEach(function (x) {
-      x.classList.remove('active');
-    });
-    $('col-detail').classList.remove('d-none');
-    $('detail-title').textContent = 'Règles — ' + c.name_cube;
-    var colCons = $('col-consolidate');
-    if (colCons) colCons.classList.add('d-none');
-    $('detail-elements').classList.add('d-none');
-    $('detail-rules').classList.remove('d-none');
-    updateToolbarButtons();
-    return refreshCubeDimensionInfo().then(function () {
-      return refreshRules();
-    });
-  }
-
-  function refreshConsolidationPickerFromRows(rows) {
-    var container = $('consolidate-pick-list');
-    if (!container) return;
-    var basesAll = rows.filter(function (r) {
-      var t = String(r.type);
-      return t === '1' || t === '2';
-    });
-    basesAll.sort(function (a, b) {
-      return parseInt(a.position, 10) - parseInt(b.position, 10);
-    });
-    var ex = state.excludeFromConsolidationPick;
-    var bases = basesAll.filter(function (r) {
-      return !ex || String(r.element) !== String(ex);
-    });
-    container.innerHTML = '';
-    bases.forEach(function (r) {
-      var label = document.createElement('label');
-      label.className = 'list-group-item d-flex align-items-center gap-2 mb-0 py-2';
-      var cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.className = 'form-check-input flex-shrink-0 consolidate-pick';
-      cb.value = String(r.element);
-      cb.dataset.dimId = String(r.element);
-      var span = document.createElement('span');
-      span.className = 'small flex-grow-1';
-      span.textContent = r.name_element + ' (id ' + r.element + ') · ' + elementTypeLabel(r.type);
-      label.appendChild(cb);
-      label.appendChild(span);
-      container.appendChild(label);
-    });
-    if (!bases.length) {
-      if (basesAll.length && ex) {
-        container.innerHTML =
-          '<div class="list-group-item text-muted small border-0">Aucun autre élément de base à rattacher (le parent cliqué dans l’arbre est exclu).</div>';
+    function moveOrder(dir) {
+      var opts = Array.prototype.slice.call(right.selectedOptions);
+      if (!opts.length) return;
+      if (dir < 0) {
+        opts.forEach(function (opt) {
+          if (opt.previousElementSibling) right.insertBefore(opt, opt.previousElementSibling);
+        });
       } else {
-        container.innerHTML =
-          '<div class="list-group-item text-muted small border-0">Aucun élément de base (numérique ou chaîne). Créez-en dans le panneau précédent.</div>';
+        opts.reverse().forEach(function (opt) {
+          if (opt.nextElementSibling) right.insertBefore(opt.nextElementSibling, opt);
+        });
       }
     }
+
+    $('sh-right').onclick = function () {
+      moveSelected(left, right);
+    };
+    $('sh-left').onclick = function () {
+      moveSelected(right, left);
+    };
+    $('sh-up').onclick = function () {
+      moveOrder(-1);
+    };
+    $('sh-down').onclick = function () {
+      moveOrder(1);
+    };
   }
 
-  function getConsolidateSelectedIds() {
-    var container = $('consolidate-pick-list');
-    if (!container) return [];
-    var ids = [];
-    container.querySelectorAll('input.consolidate-pick:checked').forEach(function (cb) {
-      ids.push(cb.value);
-    });
-    return ids;
+  /* ---------- Refresh / errors ---------- */
+
+  function showErr(e) {
+    toast((e && e.message) || String(e), 'err');
   }
 
-  function refreshElements() {
-    if (!state.client || !state.database || !state.dimension) return Promise.resolve();
-    return state.client
-      .listElements(state.database.database, state.dimension.dimension)
-      .then(function (rows) {
-        state.lastElementRows = rows;
-        var tree = $('element-tree');
-        tree.innerHTML = '';
-        var built = buildElementTree(rows);
-        var ul = el('ul', 'list-group list-group-flush border rounded element-tree-list');
-        renderTree(ul, built.byId, built.roots);
-        tree.appendChild(ul);
-        refreshConsolidationPickerFromRows(rows);
-      });
-  }
-
-  function refreshRules() {
-    if (!state.client || !state.database || !state.cube) return Promise.resolve();
-    return state.client.listRules(state.database.database, state.cube.cube).then(function (rules) {
-      var list = $('rule-list');
-      list.innerHTML = '';
-      rules.forEach(function (r) {
-        var row = el('div', 'd-flex gap-2 align-items-start mb-2');
-        var pre = el('pre');
-        pre.className = 'list-row-main flex-grow-1 p-2 mb-0 bg-light border rounded small';
-        pre.style.whiteSpace = 'pre-wrap';
-        pre.textContent = r.rule_string || '';
-        row.appendChild(pre);
-        if (isNormalCubeRow(state.cube)) {
-          var delRule = el('button', 'btn btn-sm btn-outline-danger rounded-circle list-row-delete flex-shrink-0');
-          delRule.type = 'button';
-          delRule.setAttribute('aria-label', 'Supprimer la règle');
-          delRule.title = 'Supprimer';
-          delRule.textContent = '−';
-          delRule.addEventListener('click', function () {
-            deleteRuleRow(r);
-          });
-          row.appendChild(delRule);
+  function refreshAll(nextSelection) {
+    return loadTree()
+      .then(function () {
+        if (nextSelection) state.selection = nextSelection;
+        // fix databaseName if only id known
+        if (state.selection && state.selection.databaseId) {
+          var db = findDb(state.selection.databaseId);
+          if (db) state.selection.databaseName = db.name_database;
         }
-        list.appendChild(row);
-      });
-    });
+        renderTree();
+        return renderDetail();
+      })
+      .catch(showErr);
   }
 
-  function syncAdminListToggleUI() {
-    var wrap = $('nav-admin-list-mode-wrap');
-    var chk = $('chk-admin-full-lists');
-    if (wrap) wrap.classList.toggle('d-none', !state.isAdmin);
-    if (chk) chk.checked = !!state.adminFullListView;
+  /* ---------- Auth ---------- */
+
+  function showApp(user) {
+    $('login-view').classList.add('hidden');
+    $('app').classList.remove('hidden');
+    $('session-label').textContent = user + ' @ ' + serverBaseUrl();
   }
 
-  function bindAdminListMode() {
-    var chk = $('chk-admin-full-lists');
-    if (!chk) return;
-    chk.addEventListener('change', function () {
-      state.adminFullListView = !!chk.checked;
-      state.dimension = null;
-      state.cube = null;
-      state.detailMode = null;
-      state.lastElementRows = null;
-      state.excludeFromConsolidationPick = null;
-      state.consolidationAnchorElement = null;
-      var colD = $('col-detail');
-      if (colD) colD.classList.add('d-none');
-      var colC = $('col-consolidate');
-      if (colC) colC.classList.add('d-none');
-      updateToolbarButtons();
-      if (state.database) {
-        refreshDimensionsAndCubes();
-      }
-      refreshDatabases();
-    });
+  function showLogin() {
+    $('app').classList.add('hidden');
+    $('login-view').classList.remove('hidden');
+    state.client = null;
+    state.databases = [];
+    state.selection = null;
   }
 
-  function bindLogin() {
-    $('btn-login').addEventListener('click', function () {
-      clearMessages();
-      var base = $('inp-base').value.trim() || 'http://127.0.0.1:7777';
+  function bindUi() {
+    $('login-origin-label').textContent = 'Serveur : ' + serverBaseUrl();
+
+    $('login-form').addEventListener('submit', function (e) {
+      e.preventDefault();
       var user = $('inp-user').value.trim();
       var pass = $('inp-pass').value;
-      if (!user) {
-        showError('Identifiant requis.');
-        return;
-      }
-      state.baseUrl = base;
-      state.client = new PaloClient(base);
+      $('login-error').classList.add('hidden');
       $('btn-login').disabled = true;
-      state.client
+      var client = new PaloClient(serverBaseUrl());
+      client
         .login(user, pass)
         .then(function () {
+          state.client = client;
           state.username = user;
-          var navOut = $('nav-auth-out');
-          var navIn = $('nav-auth-in');
-          var navUser = $('nav-user-display');
-          if (navOut) navOut.classList.add('d-none');
-          if (navIn) navIn.classList.remove('d-none');
-          if (navUser) navUser.textContent = 'Connecté : ' + user;
-          var hint = $('app-login-hint');
-          if (hint) hint.classList.add('d-none');
-          $('col-databases').classList.remove('d-none');
-          $('inp-pass').value = '';
-          hideModal('modalLogin');
-          return state.client.userInfo().catch(function () {
-            return { isAdmin: false };
-          });
+          showApp(user);
+          return refreshAll(null);
         })
-        .then(function (info) {
-          state.isAdmin = !!(info && info.isAdmin);
-          state.adminFullListView = false;
-          var badge = $('logged-admin-badge');
-          if (badge) badge.classList.toggle('d-none', !state.isAdmin);
-          var btnUsers = $('btn-open-users-modal');
-          if (btnUsers) btnUsers.classList.toggle('d-none', !state.isAdmin);
-          syncAdminListToggleUI();
-          showOk('Connecté.');
-          return refreshDatabases();
-        })
-        .catch(function (e) {
-          showError(e.message || String(e));
-          state.client = null;
+        .catch(function (err) {
+          $('login-error').textContent = err.message || String(err);
+          $('login-error').classList.remove('hidden');
         })
         .then(function () {
           $('btn-login').disabled = false;
         });
     });
 
-    $('btn-logout').addEventListener('click', function () {
-      if (state.client) {
-        state.client.logout().catch(function () {});
-      }
-      state.client = null;
-      state.database = null;
-      state.dimension = null;
-      state.cube = null;
-      state.detailMode = null;
-      state.lastElementRows = null;
-      state.excludeFromConsolidationPick = null;
-      state.consolidationAnchorElement = null;
-      state.isAdmin = false;
-      state.adminFullListView = false;
-      syncAdminListToggleUI();
-      clearServerUsersCtx();
-      var badge = $('logged-admin-badge');
-      if (badge) badge.classList.add('d-none');
-      var btnUsers = $('btn-open-users-modal');
-      if (btnUsers) btnUsers.classList.add('d-none');
-      var navOut = $('nav-auth-out');
-      var navIn = $('nav-auth-in');
-      var navUser = $('nav-user-display');
-      if (navOut) navOut.classList.remove('d-none');
-      if (navIn) navIn.classList.add('d-none');
-      if (navUser) navUser.textContent = '';
-      var hint = $('app-login-hint');
-      if (hint) hint.classList.remove('d-none');
-      $('col-databases').classList.add('d-none');
-      $('col-db-content').classList.add('d-none');
-      $('col-detail').classList.add('d-none');
-      var colC = $('col-consolidate');
-      if (colC) colC.classList.add('d-none');
-      var sysHint = $('db-content-system-hint');
-      if (sysHint) sysHint.classList.add('d-none');
-      updateToolbarButtons();
-      clearMessages();
-    });
-  }
+    $('btn-logout').onclick = function () {
+      var c = state.client;
+      showLogin();
+      if (c) c.logout();
+    };
 
-  function bindDb() {
-    $('btn-db-create').addEventListener('click', function () {
-      clearMessages();
-      var name = $('inp-new-db').value.trim();
-      if (!name || !state.client) return;
-      state.client
-        .createDatabase(name)
-        .then(function () {
-          $('inp-new-db').value = '';
-          hideModal('modalNewDatabase');
-          showOk('Base créée.');
-          return refreshDatabases();
-        })
-        .catch(function (e) {
-          showError(e.message || String(e));
+    $('btn-refresh-tree').onclick = function () {
+      refreshAll(state.selection);
+    };
+
+    $('btn-new-database').onclick = function () {
+      promptName('Nouvelle base', 'Nom de la base', '').then(function (name) {
+        if (!name) return;
+        return state.client.createDatabase(name).then(function (created) {
+          toast('Base créée.', 'ok');
+          setOpen(treeKey(['db', created.database]), true);
+          return refreshAll({
+            type: 'database',
+            databaseId: created.database,
+            databaseName: created.name_database || name,
+          });
         });
-    });
-  }
+      }).catch(showErr);
+    };
 
-  function bindDimCube() {
-    $('btn-dim-create').addEventListener('click', function () {
-      clearMessages();
-      if (!state.client || !state.database) return;
-      var name = $('inp-new-dim').value.trim();
-      if (!name) return;
-      state.client
-        .createDimension(state.database.database, name)
-        .then(function () {
-          $('inp-new-dim').value = '';
-          hideModal('modalNewDimension');
-          showOk('Dimension créée.');
-          return refreshDimensionsAndCubes();
-        })
-        .catch(function (e) {
-          showError(e.message || String(e));
-        });
-    });
-
-    $('btn-cube-create').addEventListener('click', function () {
-      clearMessages();
-      if (!state.client || !state.database) return;
-      var name = $('inp-new-cube').value.trim();
-      var dimIds = getSelectedCubeDimensionIds();
-      if (!name) {
-        showError('Indiquez un nom de cube.');
-        return;
+    $('modal').addEventListener('click', function (e) {
+      if (e.target.getAttribute('data-close')) {
+        if (state.modalResolve) state.modalResolve(false);
       }
-      if (!dimIds.length) {
-        showError('Sélectionnez au moins une dimension (clic sur la ligne).');
-        return;
+    });
+    $('modal-ok').onclick = function () {
+      if (state.modalResolve) state.modalResolve(true);
+    };
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !$('modal').classList.contains('hidden')) {
+        if (state.modalResolve) state.modalResolve(false);
       }
-      state.client
-        .createCube(state.database.database, name, dimIds.join(','))
-        .then(function () {
-          $('inp-new-cube').value = '';
-          hideModal('modalNewCube');
-          var picker = $('cube-dim-picker');
-          if (picker) picker.innerHTML = '';
-          showOk('Cube créé.');
-          return refreshDimensionsAndCubes();
-        })
-        .catch(function (e) {
-          showError(e.message || String(e));
-        });
     });
   }
 
-  function wireCubeModal() {
-    var modal = $('modalNewCube');
-    if (!modal) return;
-    modal.addEventListener('show.bs.modal', function () {
-      populateCubeDimensionPicker();
-    });
-  }
-
-  function bindElements() {
-    $('btn-element-create').addEventListener('click', function () {
-      clearMessages();
-      if (!state.client || !state.database || !state.dimension || !isDimensionElementsMutable(state.dimension)) return;
-      var name = $('inp-el-name').value.trim();
-      var type = parseInt($('inp-el-type').value, 10);
-      if (!name) return;
-      if (type !== 1 && type !== 2) {
-        showError('Type non pris en charge ici (utilisez le panneau Consolidation).');
-        return;
-      }
-      state.client
-        .createElement(state.database.database, state.dimension.dimension, name, type, undefined, undefined)
-        .then(function () {
-          $('inp-el-name').value = '';
-          $('inp-el-type').value = '1';
-          hideModal('modalNewElement');
-          showOk('Élément créé.');
-          return refreshElements();
-        })
-        .catch(function (e) {
-          showError(e.message || String(e));
-        });
-    });
-  }
-
-  function bindAttributes() {
-    var btn = $('btn-attribute-create');
-    if (!btn) return;
-    btn.addEventListener('click', function () {
-      clearMessages();
-      if (
-        !state.client ||
-        !state.database ||
-        !state.attributeDimension ||
-        !isDimensionElementsMutable(state.attributeDimension)
-      ) {
-        return;
-      }
-      var inp = $('inp-new-attr-name');
-      var name = inp && inp.value ? inp.value.trim() : '';
-      if (!name) {
-        showError('Indiquez un nom d’attribut.');
-        return;
-      }
-      state.client
-        .createElement(state.database.database, state.attributeDimension.dimension, name, 2, undefined, undefined)
-        .then(function () {
-          if (inp) inp.value = '';
-          hideModal('modalNewAttribute');
-          showOk('Attribut créé.');
-          return refreshAttributePanel();
-        })
-        .catch(function (e) {
-          showError(e.message || String(e));
-        });
-    });
-  }
-
-  function bindConsolidate() {
-    $('btn-consolidate-create').addEventListener('click', function () {
-      clearMessages();
-      if (!state.client || !state.database || !state.dimension || !isNormalDimensionRow(state.dimension)) return;
-      var anchor = state.consolidationAnchorElement;
-      if (!anchor || anchor.element == null) {
-        showError('Cliquez sur l’élément parent dans l’arbre (nœud qui deviendra consolidé).');
-        return;
-      }
-      var parentId = String(anchor.element);
-      var childIds = getConsolidateSelectedIds();
-      var weights = $('inp-consolidate-weights').value.trim().replace(/\s+/g, '');
-      if (!childIds.length) {
-        showError('Cochez au moins un élément de base à rattacher comme enfant.');
-        return;
-      }
-      if (weights) {
-        var parts = weights.split(',').filter(function (x) {
-          return x !== '';
-        });
-        if (parts.length !== childIds.length) {
-          showError('Le nombre de poids doit correspondre au nombre d’éléments cochés.');
-          return;
-        }
-      }
-      elementAppendRequest(
-        state.client,
-        state.database.database,
-        state.dimension.dimension,
-        parentId,
-        childIds.join(','),
-        weights || undefined
-      )
-        .then(function () {
-          $('inp-consolidate-weights').value = '';
-          var list = $('consolidate-pick-list');
-          if (list) {
-            list.querySelectorAll('input.consolidate-pick').forEach(function (cb) {
-              cb.checked = false;
-            });
-          }
-          showOk('Consolidation appliquée : enfants ajoutés sous l’élément (type consolidé si nécessaire).');
-          return refreshElements();
-        })
-        .catch(function (e) {
-          showError(e.message || String(e));
-        });
-    });
-  }
-
-  function bindRules() {
-    $('btn-rule-create').addEventListener('click', function () {
-      clearMessages();
-      if (!state.client || !state.database || !state.cube || !isNormalCubeRow(state.cube)) return;
-      var def = $('inp-rule-def').value;
-      if (!def.trim()) return;
-      state.client
-        .createRule(state.database.database, state.cube.cube, def)
-        .then(function () {
-          $('inp-rule-def').value = '';
-          hideModal('modalNewRule');
-          showOk('Règle créée.');
-          return refreshRules();
-        })
-        .catch(function (e) {
-          showError(e.message || String(e));
-        });
-    });
-  }
-
-  function wireModalFocus() {
-    [
-      'modalUsers',
-      'modalLogin',
-      'modalNewDatabase',
-      'modalNewDimension',
-      'modalNewCube',
-      'modalNewElement',
-      'modalNewAttribute',
-      'modalNewRule',
-    ].forEach(function (mid) {
-      var modal = $(mid);
-      if (!modal) return;
-      modal.addEventListener('shown.bs.modal', function () {
-        var focusable = modal.querySelector('input, textarea, select');
-        if (focusable) focusable.focus();
-      });
-    });
-  }
-
-  function init() {
-    $('inp-base').value = state.baseUrl;
-    updateToolbarButtons();
-    wireModalFocus();
-    wireCubeModal();
-    bindLogin();
-    bindAdminListMode();
-    bindServerUsers();
-    bindDb();
-    bindDimCube();
-    bindElements();
-    bindAttributes();
-    bindConsolidate();
-    bindRules();
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
+  bindUi();
 })();

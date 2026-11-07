@@ -1,3 +1,14 @@
+# Cahiers des charges — administration / modeleur Palo
+
+| Document | Contenu |
+|----------|---------|
+| **`modeleur-fonctionnel.md`** | **Cahier fonctionnel de référence** (inspiré PalOOCa Modeler) : connexions, bases, dims, éléments/mesures, cubes, règles, droits — priorités P0/P1/P2 |
+| `README.md` (ci-dessous) | Spec initiale de l’app admin JS (historique / à fusionner progressivement avec le modeleur) |
+
+État d’implémentation web : `documentation/admin-ui.md` (`/explore`).
+
+---
+
 # Cahier des charges — application d’administration Palo (JS)
 
 Ce document sert de **base avant développement** : tu peux le compléter ou me dicter les sections (par message), puis on figera le périmètre et l’ordre des travaux.

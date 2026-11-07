@@ -222,6 +222,17 @@ void PaloHttpServer::addStaticHandlers()
 	addHandler("/js/palo.js", new HttpFileRequestHandler(templateDirectory + "/palo.js", "text/javascript"));
 	addHandler("/js/md5.js", new HttpFileRequestHandler(templateDirectory + "/md5.js", "text/javascript"));
 	addHandler("/js/rule_lexer.js", new HttpFileRequestHandler(templateDirectory + "/rule_lexer.js", "text/javascript"));
+
+	// Admin / explore UI (files under templateDirectory/explore/, packaged from admin/)
+	// /explore redirects to /explore/index.html so relative css/js resolve under /explore/.
+	const string explore = templateDirectory + "/explore";
+	addHandler("/explore", new HttpFileRequestHandler(templateDirectory + "/explore_root.html", "text/html;charset=utf-8"));
+	addHandler("/explore/index.html", new HttpFileRequestHandler(explore + "/index.html", "text/html;charset=utf-8"));
+	addHandler("/explore/css/app.css", new HttpFileRequestHandler(explore + "/css/app.css", "text/css;charset=utf-8"));
+	addHandler("/explore/js/app.js", new HttpFileRequestHandler(explore + "/js/app.js", "text/javascript;charset=utf-8"));
+	addHandler("/explore/js/api.js", new HttpFileRequestHandler(explore + "/js/api.js", "text/javascript;charset=utf-8"));
+	addHandler("/explore/js/palo-csv.js", new HttpFileRequestHandler(explore + "/js/palo-csv.js", "text/javascript;charset=utf-8"));
+	addHandler("/explore/vendor/md5.js", new HttpFileRequestHandler(explore + "/vendor/md5.js", "text/javascript;charset=utf-8"));
 }
 
 void PaloHttpServer::addDocumentationHandlers(const string& tmpl)
