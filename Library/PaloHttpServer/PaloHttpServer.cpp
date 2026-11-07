@@ -232,6 +232,7 @@ void PaloHttpServer::addStaticHandlers()
 	addHandler("/explore/js/app.js", new HttpFileRequestHandler(explore + "/js/app.js", "text/javascript;charset=utf-8"));
 	addHandler("/explore/js/api.js", new HttpFileRequestHandler(explore + "/js/api.js", "text/javascript;charset=utf-8"));
 	addHandler("/explore/js/palo-csv.js", new HttpFileRequestHandler(explore + "/js/palo-csv.js", "text/javascript;charset=utf-8"));
+	addHandler("/explore/js/rule-editor.js", new HttpFileRequestHandler(explore + "/js/rule-editor.js", "text/javascript;charset=utf-8"));
 	addHandler("/explore/vendor/md5.js", new HttpFileRequestHandler(explore + "/vendor/md5.js", "text/javascript;charset=utf-8"));
 }
 

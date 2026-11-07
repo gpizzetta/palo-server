@@ -68,6 +68,33 @@
       </div>
     </div>
 
+    <!-- Reconnexion après timeout de session Palo -->
+    <div id="reauth-modal" class="modal hidden" aria-hidden="true">
+      <div class="modal-backdrop"></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="reauth-title">
+        <header class="modal-header">
+          <h2 id="reauth-title">Session expirée</h2>
+        </header>
+        <form id="reauth-form" class="modal-body">
+          <p class="muted">
+            La connexion au serveur Palo a expiré (inactivité). Reconnectez-vous pour continuer.
+          </p>
+          <label>
+            Identifiant
+            <input id="reauth-user" type="text" autocomplete="username" required />
+          </label>
+          <label>
+            Mot de passe
+            <input id="reauth-pass" type="password" autocomplete="current-password" required />
+          </label>
+          <p id="reauth-error" class="error hidden"></p>
+          <div class="modal-footer" style="padding: 0; border: 0; justify-content: flex-end">
+            <button type="submit" id="reauth-ok" class="btn btn-primary">Se reconnecter</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <script src="vendor/md5.js"></script>
     <script src="js/palo-csv.js"></script>
     <script src="js/api.js"></script>

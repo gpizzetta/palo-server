@@ -7,8 +7,6 @@
     <link rel="stylesheet" href="css/app.css" />
   </head>
   <body>
-    <div id="toast" class="toast hidden" role="status"></div>
-
     <!-- Login (same-origin : le serveur qui sert cette page) -->
     <section id="login-view" class="login-view">
       <form id="login-form" class="login-card" autocomplete="on">
@@ -31,14 +29,19 @@
       <header class="topbar">
         <strong>Modeleur Palo</strong>
         <span id="session-label" class="muted"></span>
+        <div id="toast" class="toast hidden" role="status"></div>
         <button type="button" id="btn-logout" class="btn btn-ghost">Déconnexion</button>
       </header>
 
       <div class="workspace">
         <aside class="sidebar">
           <div class="sidebar-toolbar">
-            <button type="button" id="btn-refresh-tree" class="btn btn-small" title="Rafraîchir">↻</button>
-            <button type="button" id="btn-new-database" class="btn btn-small btn-primary" title="Nouvelle base">+ Base</button>
+            <button type="button" id="btn-refresh-tree" class="btn btn-icon btn-small" title="Rafraîchir" aria-label="Rafraîchir">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 2.5a5.5 5.5 0 0 0-4.66 2.56.75.75 0 1 1-1.27-.8A7 7 0 0 1 14.5 8h1.1a.75.75 0 0 1 .53 1.28l-2 2a.75.75 0 0 1-1.06 0l-2-2A.75.75 0 0 1 11.6 8H13A5.5 5.5 0 0 0 8 2.5zm5.93 6.64a.75.75 0 0 1 .8 1.27A7 7 0 0 1 1.5 8H.4a.75.75 0 0 1-.53-1.28l2-2a.75.75 0 0 1 1.06 0l2 2A.75.75 0 0 1 4.4 8H3a5.5 5.5 0 0 0 10.93 1.14z"/></svg>
+            </button>
+            <button type="button" id="btn-new-database" class="btn btn-icon btn-small btn-primary" title="Nouvelle base" aria-label="Nouvelle base">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2z"/></svg>
+            </button>
           </div>
           <ul id="tree" class="tree" role="tree"></ul>
         </aside>
@@ -68,9 +71,37 @@
       </div>
     </div>
 
+    <!-- Reconnexion après timeout de session Palo -->
+    <div id="reauth-modal" class="modal hidden" aria-hidden="true">
+      <div class="modal-backdrop"></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="reauth-title">
+        <header class="modal-header">
+          <h2 id="reauth-title">Session expirée</h2>
+        </header>
+        <form id="reauth-form" class="modal-body">
+          <p class="muted">
+            La connexion au serveur Palo a expiré (inactivité). Reconnectez-vous pour continuer.
+          </p>
+          <label>
+            Identifiant
+            <input id="reauth-user" type="text" autocomplete="username" required />
+          </label>
+          <label>
+            Mot de passe
+            <input id="reauth-pass" type="password" autocomplete="current-password" required />
+          </label>
+          <p id="reauth-error" class="error hidden"></p>
+          <div class="modal-footer" style="padding: 0; border: 0; justify-content: flex-end">
+            <button type="submit" id="reauth-ok" class="btn btn-primary">Se reconnecter</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <script src="vendor/md5.js"></script>
     <script src="js/palo-csv.js"></script>
     <script src="js/api.js"></script>
-    <script src="js/app.js"></script>
+    <!-- PaloRuleEditor est inclus en tête de app.js au deploy (handler /explore/js/rule-editor.js à activer via rebuild Palo) -->
+    <script src="js/app.js?v=rule-ref-hierarchy-2"></script>
   </body>
 </html>

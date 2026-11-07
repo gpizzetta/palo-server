@@ -23,7 +23,16 @@ Modeleur web **P0** (JS vanilla, sans CDN), servi par Palo.
 | Consolidation (enfants + poids) | Oui |
 | Cubes : liste, créer (shuttle), renommer, supprimer, vider | Oui |
 
-P1 (règles, attributs, users/droits) et P2 (vues/subsets) : non inclus.
+## P1 couvert
+
+| Fonction | Statut |
+|----------|--------|
+| Règles cube : liste, créer, éditer, activer, supprimer, ↑↓ | Oui |
+| Attributs de dimension : liste, créer, supprimer | Oui (valeurs cellules = raffinement) |
+| Utilisateurs / groupes / rôles (System, admin) | Oui |
+| Droits rôles (`#_ROLE_RIGHT_OBJECT`) | Oui (édition cellule) |
+
+P2 (vues / subsets tableur) : non inclus.
 
 ## Déploiement fichiers (sans rebuild `.deb`)
 

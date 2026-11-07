@@ -29,6 +29,7 @@ cd admin
 | `js/palo-csv.js` | Parse CSV Palo |
 | `vendor/md5.js` | Hash mot de passe login |
 
-## Périmètre P0
+## Périmètre
 
-Connexion, bases CRUD, dimensions CRUD, éléments + consolidations, cubes (shuttle ≥ 2 dims), vider cube.
+- **P0** : connexion, bases, dimensions, éléments + consolidations, cubes (shuttle ≥ 2 dims), vider cube
+- **P1** : règles cube, attributs, administration (users / groupes / rôles / droits) — visible si compte admin
