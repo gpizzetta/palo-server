@@ -15,7 +15,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
 STAGING_DIR="${BUILD_DIR}/pkg-root"
-VERSION="5.1.4-15"
+VERSION="5.1.4-16"
 PKG_NAME="palo-server_${VERSION}_amd64.deb"
 
 echo "Root directory : ${ROOT_DIR}"
@@ -69,11 +69,21 @@ if [ -d "${ROOT_DIR}/Api" ]; then
   cp -R "${ROOT_DIR}/Api" "${STAGING_DIR}/var/lib/palo/Api"
 fi
 
-# Admin UI served at /explore (see PaloHttpServer::addStaticHandlers)
+# Admin UI served at / (see PaloHttpServer::addStaticHandlers → Api/explore)
 if [ -d "${ROOT_DIR}/admin" ]; then
   mkdir -p "${STAGING_DIR}/var/lib/palo/Api/explore"
-  cp -a "${ROOT_DIR}/admin/." "${STAGING_DIR}/var/lib/palo/Api/explore/"
-  rm -f "${STAGING_DIR}/var/lib/palo/Api/explore/README.md"
+  rsync -a --delete \
+    --exclude 'README.md' \
+    --exclude 'deploy-local.sh' \
+    "${ROOT_DIR}/admin/" "${STAGING_DIR}/var/lib/palo/Api/explore/"
+  # Même concat que deploy-local.sh : i18n + rule-editor préfixés dans app.js
+  if [ -f "${ROOT_DIR}/admin/js/app.js" ]; then
+    parts=()
+    [ -f "${ROOT_DIR}/admin/js/i18n.js" ] && parts+=("${ROOT_DIR}/admin/js/i18n.js")
+    [ -f "${ROOT_DIR}/admin/js/rule-editor.js" ] && parts+=("${ROOT_DIR}/admin/js/rule-editor.js")
+    parts+=("${ROOT_DIR}/admin/js/app.js")
+    cat "${parts[@]}" > "${STAGING_DIR}/var/lib/palo/Api/explore/js/app.js"
+  fi
 fi
 
 # Install systemd unit
