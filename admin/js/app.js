@@ -28,6 +28,7 @@
     client: null,
     username: '',
     isAdmin: false,
+    groups: [],
     rights: {}, // droits de rôle (user_info show_permission)
     databases: [],
     system: null, // { databaseId, usersDim, groupsDim, rolesDim, userGroupCube, groupRoleCube, roleRightCube, … }
@@ -69,9 +70,23 @@
     return roleCan('user', 'R') || roleCan('group', 'R') || roleCan('rights', 'R') || roleCan('password', 'R');
   }
 
+  /** Membre du groupe Palo « admin » (pas seulement le rôle poweruser). */
+  function isAdminGroupMember() {
+    return (state.groups || []).indexOf('admin') >= 0;
+  }
+
+  /**
+   * #_GROUP_DATABASE_DATA est réservé au groupe admin côté serveur Palo.
+   * On aligne l’UI : menu + écran uniquement si le cube est listé ET groupe admin.
+   */
+  function canAccessGroupDatabaseRights() {
+    return isAdminGroupMember() && !!(state.system && state.system.groupDatabaseCube);
+  }
+
   function applySessionInfo(info, user) {
     state.rights = (info && info.rights) || {};
-    state.isAdmin = !!(info && info.isAdmin) || canSeeAdmin();
+    state.groups = (info && info.groups) || [];
+    state.isAdmin = isAdminGroupMember() || !!(info && info.isAdmin);
     var label = (user || state.username || '') + (state.isAdmin ? ' (admin)' : '');
     return label;
   }
@@ -434,7 +449,13 @@
           right: 'group',
           children: [
             { folder: 'group-roles', label: t('Rôles des groupes'), icon: '🎭', right: 'group' },
-            { folder: 'access-db', label: t('Droits databases'), icon: '🗄️', right: 'rights' },
+            {
+              folder: 'access-db',
+              label: t('Droits databases'),
+              icon: '🗄️',
+              right: 'rights',
+              adminGroupOnly: true,
+            },
             { folder: 'access-cube', label: t('Droits cubes'), icon: '📦', right: 'rights' },
             { folder: 'access-dim', label: t('Droits dimensions'), icon: '📐', right: 'rights' },
           ],
@@ -499,7 +520,9 @@
           var sub = document.createElement('ul');
           f.children
             .filter(function (c) {
-              return roleCan(c.right, 'R');
+              if (!roleCan(c.right, 'R')) return false;
+              if (c.adminGroupOnly && !canAccessGroupDatabaseRights()) return false;
+              return true;
             })
             .forEach(function (c) {
               var subLi = document.createElement('li');
@@ -2092,20 +2115,24 @@
     });
   }
 
-  /** Droits groupe × database — cube System #_GROUP_DATABASE_DATA. */
+  /** Droits groupe × database — cube System #_GROUP_DATABASE_DATA (groupe admin uniquement). */
   function renderAdminAccessDatabases(panel, sys) {
-    if (!roleCan('rights', 'R')) {
-      panel.innerHTML = '<p class="error">' + t('Droit insuffisant pour lire les droits.') + '</p>';
+    if (!canAccessGroupDatabaseRights()) {
+      panel.innerHTML =
+        headerHtml(t('Groupes → databases')) +
+        '<div class="panel"><p class="error">' +
+        t('Ces droits sont réservés aux membres du groupe admin.') +
+        '</p></div>';
       return Promise.resolve();
     }
-    if (!sys.groupDatabaseCube || !sys.databaseDim || !sys.groupsDim) {
+    if (!sys.databaseDim || !sys.groupsDim) {
       panel.innerHTML =
         '<p class="error">' +
         t('Cube #_GROUP_DATABASE_DATA ou dimensions #_DATABASE_ / #_GROUP_ introuvables.') +
         '</p>';
       return Promise.resolve();
     }
-    var canWrite = roleCan('rights', 'W');
+    var canWrite = isAdminGroupMember() && roleCan('rights', 'W');
     panel.innerHTML =
       headerHtml(t('Groupes → databases')) +
       '<div class="panel">' +
@@ -2916,6 +2943,8 @@
           }[state.selection.folder];
           if (state.selection.folder === 'rights') {
             state.selection = { type: 'admin-folder', folder: 'role-rights' };
+          } else if (state.selection.folder === 'access-db' && !canAccessGroupDatabaseRights()) {
+            state.selection = canSeeAdmin() ? { type: 'admin-folder', folder: 'groups' } : null;
           } else if (folderRight && !roleCan(folderRight, 'R')) {
             state.selection = canSeeAdmin() ? { type: 'admin-root' } : null;
           }
@@ -2945,6 +2974,7 @@
     state.databases = [];
     state.system = null;
     state.isAdmin = false;
+    state.groups = [];
     state.rights = {};
     state.selection = null;
   }

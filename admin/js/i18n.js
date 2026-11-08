@@ -306,6 +306,8 @@
       'Indiquez, pour chaque groupe, ce qu’il peut faire sur chaque base de données. Le tiret laisse le défaut.': 'For each group, set what it can do on each database. A dash keeps the default.',
       'Choisissez une base, puis indiquez ce que chaque groupe peut faire sur ses cubes. Le tiret laisse le défaut.': 'Pick a database, then set what each group can do on its cubes. A dash keeps the default.',
       'Choisissez une base et une dimension, puis indiquez ce que chaque groupe peut faire sur ses éléments. Le tiret laisse le défaut.': 'Pick a database and a dimension, then set what each group can do on its elements. A dash keeps the default.',
+      'Ces droits ne sont pas accessibles avec votre compte (lecture réservée aux rôles ayant le droit « rights »).': 'These rights are not available with your account (read requires the “rights” role privilege).',
+      'Ces droits sont réservés aux membres du groupe admin.': 'These rights are reserved for members of the admin group.',
     },
     de: {
       'Modeleur Palo': 'Palo Modellierer',
@@ -580,6 +582,8 @@
       'Indiquez, pour chaque groupe, ce qu’il peut faire sur chaque base de données. Le tiret laisse le défaut.': 'Legen Sie fest, was jede Gruppe auf jeder Datenbank darf. Der Strich behält den Standard.',
       'Choisissez une base, puis indiquez ce que chaque groupe peut faire sur ses cubes. Le tiret laisse le défaut.': 'Wählen Sie eine Datenbank und legen Sie fest, was jede Gruppe auf ihren Würfeln darf. Der Strich behält den Standard.',
       'Choisissez une base et une dimension, puis indiquez ce que chaque groupe peut faire sur ses éléments. Le tiret laisse le défaut.': 'Wählen Sie Datenbank und Dimension und legen Sie fest, was jede Gruppe auf den Elementen darf. Der Strich behält den Standard.',
+      'Ces droits ne sont pas accessibles avec votre compte (lecture réservée aux rôles ayant le droit « rights »).': 'Diese Rechte sind mit Ihrem Konto nicht verfügbar (Lesen erfordert das Rollenrecht „rights“).',
+      'Ces droits sont réservés aux membres du groupe admin.': 'Diese Rechte sind Mitgliedern der Admin-Gruppe vorbehalten.',
     },
   };
 
