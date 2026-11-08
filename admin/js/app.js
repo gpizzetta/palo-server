@@ -1,6 +1,6 @@
 /**
  * Modeleur Palo P0+P1 — arbre + détail (réf. PalOOCa Modeller).
- * Connexion same-origin uniquement (serveur qui sert /explore).
+ * Connexion same-origin uniquement (UI servie à /).
  */
 (function () {
   var ELEMENT_NUMERIC = 1;
@@ -11,6 +11,18 @@
 
   /** Ordre Palo : N < R < W < D < S */
   var PERM_RANK = { N: 0, R: 1, W: 2, D: 3, S: 4 };
+
+  /** Libellés des niveaux de droit (combobox) — i18n. */
+  function rightLabels() {
+    return {
+      '': t('— défaut'),
+      N: t('N — aucun'),
+      R: t('R — lire'),
+      W: t('W — écrire'),
+      D: t('D — supprimer'),
+      S: t('S — splash'),
+    };
+  }
 
   var state = {
     client: null,
@@ -25,6 +37,9 @@
     selectedElementId: null,
     modalResolve: null,
     reauthOpen: false,
+    accessCubeDbId: null, // database sélectionnée pour Accès cubes
+    accessDimDbId: null, // database sélectionnée pour Accès dimensions
+    accessDimId: null, // dimension sélectionnée pour Accès dimensions
   };
 
   function permRank(letter) {
@@ -237,7 +252,7 @@
         '" /></label>',
       function () {
         var v = ($('modal-name').value || '').trim();
-        if (!v) throw new Error('Nom requis.');
+        if (!v) throw new Error(t('Nom requis.'));
         return v;
       }
     );
@@ -348,9 +363,11 @@
             groupsDim: findDim('#_GROUP_'),
             rolesDim: findDim('#_ROLE_'),
             rightObjDim: findDim('#_RIGHT_OBJECT_'),
+            databaseDim: findDim('#_DATABASE_'),
             userGroupCube: findCube('#_USER_GROUP'),
             groupRoleCube: findCube('#_GROUP_ROLE'),
             roleRightCube: findCube('#_ROLE_RIGHT_OBJECT'),
+            groupDatabaseCube: findCube('#_GROUP_DATABASE_DATA'),
           };
         });
       } else {
@@ -373,7 +390,7 @@
       var li = document.createElement('li');
       li.className = 'muted';
       li.style.padding = '0.5rem';
-      li.textContent = 'Aucune base. Créez-en une avec le bouton « + » de la barre latérale.';
+      li.textContent = t('Aucune base. Créez-en une avec le bouton « + » de la barre latérale.');
       root.appendChild(li);
     }
   }
@@ -388,7 +405,7 @@
     row.innerHTML =
       '<button type="button" class="tree-twist">' +
       (open ? '▼' : '▶') +
-      '</button><span class="tree-icon">🔐</span><span class="tree-label">Administration</span>';
+      '</button><span class="tree-icon">🔐</span><span class="tree-label">' + t('Administration') + '</span>';
     row.querySelector('.tree-twist').addEventListener('click', function (e) {
       e.stopPropagation();
       setOpen(key, !open);
@@ -400,34 +417,113 @@
     li.appendChild(row);
     if (open) {
       var ul = document.createElement('ul');
-      [
-        { folder: 'users', label: 'Utilisateurs', icon: '👤', right: 'user' },
-        { folder: 'groups', label: 'Groupes', icon: '👥', right: 'group' },
-        { folder: 'roles', label: 'Rôles', icon: '🎭', right: 'rights' },
-      ]
-        .filter(function (f) {
-          return roleCan(f.right, 'R');
-        })
-        .forEach(function (f) {
-          var child = document.createElement('li');
-          var crow = document.createElement('div');
-          crow.className = 'tree-item';
-          if (state.selection && state.selection.type === 'admin-folder' && state.selection.folder === f.folder) {
-            crow.classList.add('active');
-          }
-          crow.innerHTML =
-            '<span class="tree-twist"></span><span class="tree-icon">' +
-            f.icon +
-            '</span><span class="tree-label">' +
-            f.label +
-            '</span>';
-          crow.addEventListener('click', function (e) {
+      var topFolders = [
+        {
+          folder: 'users',
+          label: t('Utilisateurs'),
+          icon: '👤',
+          right: 'user',
+          children: [
+            { folder: 'user-groups', label: t('Appartenance groupes'), icon: '🔗', right: 'user' },
+          ],
+        },
+        {
+          folder: 'groups',
+          label: t('Groupes'),
+          icon: '👥',
+          right: 'group',
+          children: [
+            { folder: 'group-roles', label: t('Rôles des groupes'), icon: '🎭', right: 'group' },
+            { folder: 'access-db', label: t('Droits databases'), icon: '🗄️', right: 'rights' },
+            { folder: 'access-cube', label: t('Droits cubes'), icon: '📦', right: 'rights' },
+            { folder: 'access-dim', label: t('Droits dimensions'), icon: '📐', right: 'rights' },
+          ],
+        },
+        {
+          folder: 'roles',
+          label: t('Rôles'),
+          icon: '🎭',
+          right: 'rights',
+          children: [
+            { folder: 'role-rights', label: t('Droits des rôles'), icon: '🔐', right: 'rights' },
+          ],
+        },
+      ].filter(function (f) {
+        return roleCan(f.right, 'R');
+      });
+
+      var selFolder = state.selection && state.selection.type === 'admin-folder' ? state.selection.folder : null;
+      var expandParent = {
+        'user-groups': 'admin:users',
+        'group-roles': 'admin:groups',
+        'access-db': 'admin:groups',
+        'access-cube': 'admin:groups',
+        'access-dim': 'admin:groups',
+        'role-rights': 'admin:roles',
+      };
+      if (selFolder && expandParent[selFolder]) {
+        setOpen(expandParent[selFolder], true);
+      }
+
+      topFolders.forEach(function (f) {
+        var child = document.createElement('li');
+        var hasKids = f.children && f.children.length;
+        var gKey = 'admin:' + f.folder;
+        var gOpen = hasKids && isOpen(gKey);
+        var crow = document.createElement('div');
+        crow.className = 'tree-item';
+        if (selFolder === f.folder) crow.classList.add('active');
+        crow.innerHTML =
+          (hasKids
+            ? '<button type="button" class="tree-twist">' + (gOpen ? '▼' : '▶') + '</button>'
+            : '<span class="tree-twist"></span>') +
+          '<span class="tree-icon">' +
+          f.icon +
+          '</span><span class="tree-label">' +
+          f.label +
+          '</span>';
+        if (hasKids) {
+          crow.querySelector('.tree-twist').addEventListener('click', function (e) {
             e.stopPropagation();
-            selectNode({ type: 'admin-folder', folder: f.folder });
+            setOpen(gKey, !gOpen);
+            renderTree();
           });
-          child.appendChild(crow);
-          ul.appendChild(child);
+        }
+        crow.addEventListener('click', function (e) {
+          e.stopPropagation();
+          selectNode({ type: 'admin-folder', folder: f.folder });
         });
+        child.appendChild(crow);
+
+        if (hasKids && gOpen) {
+          var sub = document.createElement('ul');
+          f.children
+            .filter(function (c) {
+              return roleCan(c.right, 'R');
+            })
+            .forEach(function (c) {
+              var subLi = document.createElement('li');
+              var srow = document.createElement('div');
+              srow.className = 'tree-item';
+              if (selFolder === c.folder) srow.classList.add('active');
+              srow.innerHTML =
+                '<span class="tree-twist"></span><span class="tree-icon">' +
+                c.icon +
+                '</span><span class="tree-label">' +
+                c.label +
+                '</span>';
+              srow.addEventListener('click', function (e) {
+                e.stopPropagation();
+                setOpen(gKey, true);
+                selectNode({ type: 'admin-folder', folder: c.folder });
+              });
+              subLi.appendChild(srow);
+              sub.appendChild(subLi);
+            });
+          child.appendChild(sub);
+        }
+        ul.appendChild(child);
+      });
       li.appendChild(ul);
     }
     return li;
@@ -467,7 +563,7 @@
     if (open) {
       var kids = document.createElement('ul');
       kids.appendChild(
-        renderFolderNode(db, 'dimensions', 'Dimensions', '📐', db._dimensions || [], function (dim) {
+        renderFolderNode(db, 'dimensions', t('Dimensions'), '📐', db._dimensions || [], function (dim) {
           return {
             type: 'dimension',
             databaseId: db.database,
@@ -478,7 +574,7 @@
         })
       );
       kids.appendChild(
-        renderFolderNode(db, 'cubes', 'Cubes', '📦', db._cubes || [], function (cube) {
+        renderFolderNode(db, 'cubes', t('Cubes'), '📦', db._cubes || [], function (cube) {
           return {
             type: 'cube',
             databaseId: db.database,
@@ -590,47 +686,73 @@
     );
   }
 
+  /** Phrase d’aide utilisateur sous le titre (HTML déjà traduit). */
+  function introHtml(text) {
+    if (!text) return '';
+    return '<p class="panel-intro muted">' + text + '</p>';
+  }
+
   function renderDatabaseDetail(panel, sel) {
     var db = findDb(sel.databaseId);
     var dbPerm = (db && db.permission) || 'N';
     var mutable = isNormalDatabase(db);
+    var dimCount = ((db && db._dimensions) || []).length;
+    var cubeCount = ((db && db._cubes) || []).length;
     panel.innerHTML =
       headerHtml(
         sel.databaseName,
         [
-          iconBtn({ id: 'act-rename-db', icon: 'edit', title: 'Renommer la base', allowed: mutable && canBoth('database', dbPerm, 'W') }),
-          iconBtn({ id: 'act-del-db', icon: 'del', title: 'Supprimer la base', extraClass: 'btn-danger', allowed: mutable && canBoth('database', dbPerm, 'D') }),
-          iconBtn({ id: 'act-new-dim', icon: 'add', title: 'Nouvelle dimension', extraClass: 'btn-primary', allowed: mutable && canBoth('dimension', dbPerm, 'W') }),
-          iconBtn({ id: 'act-new-cube', icon: 'add', title: 'Nouveau cube', extraClass: 'btn-primary', allowed: mutable && canBoth('cube', dbPerm, 'W') }),
+          iconBtn({ id: 'act-rename-db', icon: 'edit', title: t('Renommer la base'), allowed: mutable && canBoth('database', dbPerm, 'W') }),
+          iconBtn({ id: 'act-del-db', icon: 'del', title: t('Supprimer la base'), extraClass: 'btn-danger', allowed: mutable && canBoth('database', dbPerm, 'D') }),
         ].join('')
       ) +
-      '<div class="panel"><h3>Base de données</h3><p class="muted">Créez des dimensions (ex. Mesures, Produits), peuplez-les d’éléments, puis créez un cube (≥ 2 dimensions).</p></div>';
+      '<div class="panel">' +
+      introHtml(t('Ouvrez Dimensions ou Cubes pour explorer et modifier le contenu de cette base.')) +
+      '<ul class="meta-list" id="db-folder-list"></ul></div>';
+
+    var ul = $('db-folder-list');
+    [
+      { folder: 'dimensions', label: t('Dimensions'), count: dimCount },
+      { folder: 'cubes', label: t('Cubes'), count: cubeCount },
+    ].forEach(function (entry) {
+      var li = document.createElement('li');
+      var a = document.createElement('a');
+      a.href = '#';
+      a.textContent = entry.label + ' (' + entry.count + ')';
+      a.onclick = function (e) {
+        e.preventDefault();
+        setOpen(treeKey(['db', sel.databaseId]), true);
+        setOpen(treeKey(['db', sel.databaseId, entry.folder]), true);
+        selectNode({
+          type: 'folder',
+          folder: entry.folder,
+          databaseId: sel.databaseId,
+          databaseName: sel.databaseName,
+        });
+      };
+      li.appendChild(a);
+      ul.appendChild(li);
+    });
 
     onClickIf('act-rename-db', function () {
-      promptName('Renommer la base', 'Nouveau nom', sel.databaseName).then(function (name) {
+      promptName(t('Renommer la base'), t('Nouveau nom'), sel.databaseName).then(function (name) {
         if (!name) return;
         return state.client.renameDatabase(sel.databaseId, name).then(function () {
-          toast('Base renommée.', 'ok');
+          toast(t('Base renommée.'), 'ok');
           return refreshAll({ type: 'database', databaseId: sel.databaseId, databaseName: name });
         });
       }).catch(showErr);
     });
     onClickIf('act-del-db', function () {
-      if (!confirmAction('Supprimer la base « ' + sel.databaseName + ' » ?')) return;
+      if (!confirmAction(t('Supprimer la base « {name} » ?', { name: sel.databaseName }))) return;
       state.client
         .destroyDatabase(sel.databaseId)
         .then(function () {
-          toast('Base supprimée.', 'ok');
+          toast(t('Base supprimée.'), 'ok');
           state.selection = null;
           return refreshAll(null);
         })
         .catch(showErr);
-    });
-    onClickIf('act-new-dim', function () {
-      return createDimensionFlow(sel);
-    });
-    onClickIf('act-new-cube', function () {
-      return createCubeFlow(sel);
     });
     return Promise.resolve();
   }
@@ -641,10 +763,12 @@
     var canCreate = isNormalDatabase(db) && canBoth('dimension', (db && db.permission) || 'N', 'W');
     panel.innerHTML =
       headerHtml(
-        'Dimensions — ' + sel.databaseName,
-        iconBtn({ id: 'act-new-dim', icon: 'add', title: 'Nouvelle dimension', extraClass: 'btn-primary', allowed: canCreate })
+        t('Dimensions') + ' — ' + sel.databaseName,
+        iconBtn({ id: 'act-new-dim', icon: 'add', title: t('Nouvelle dimension'), extraClass: 'btn-primary', allowed: canCreate })
       ) +
-      '<div class="panel"><ul class="meta-list" id="dim-list"></ul></div>';
+      '<div class="panel">' +
+      introHtml(t('Liste des dimensions de la base. Cliquez une ligne pour gérer ses éléments.')) +
+      '<ul class="meta-list" id="dim-list"></ul></div>';
     var ul = $('dim-list');
     dims.forEach(function (d) {
       var li = document.createElement('li');
@@ -664,7 +788,7 @@
       li.appendChild(a);
       ul.appendChild(li);
     });
-    if (!dims.length) ul.innerHTML = '<li class="muted">Aucune dimension.</li>';
+    if (!dims.length) ul.innerHTML = '<li class="muted">' + t('Aucune dimension.') + '</li>';
     onClickIf('act-new-dim', function () {
       return createDimensionFlow(sel);
     });
@@ -677,10 +801,12 @@
     var canCreate = isNormalDatabase(db) && canBoth('cube', (db && db.permission) || 'N', 'W');
     panel.innerHTML =
       headerHtml(
-        'Cubes — ' + sel.databaseName,
-        iconBtn({ id: 'act-new-cube', icon: 'add', title: 'Nouveau cube', extraClass: 'btn-primary', allowed: canCreate })
+        t('Cubes') + ' — ' + sel.databaseName,
+        iconBtn({ id: 'act-new-cube', icon: 'add', title: t('Nouveau cube'), extraClass: 'btn-primary', allowed: canCreate })
       ) +
-      '<div class="panel"><ul class="meta-list" id="cube-list"></ul></div>';
+      '<div class="panel">' +
+      introHtml(t('Liste des cubes de la base. Cliquez une ligne pour voir les axes et les règles.')) +
+      '<ul class="meta-list" id="cube-list"></ul></div>';
     var ul = $('cube-list');
     cubes.forEach(function (c) {
       var li = document.createElement('li');
@@ -700,7 +826,7 @@
       li.appendChild(a);
       ul.appendChild(li);
     });
-    if (!cubes.length) ul.innerHTML = '<li class="muted">Aucun cube.</li>';
+    if (!cubes.length) ul.innerHTML = '<li class="muted">' + t('Aucun cube.') + '</li>';
     onClickIf('act-new-cube', function () {
       return createCubeFlow(sel);
     });
@@ -715,21 +841,22 @@
       headerHtml(
         sel.dimensionName,
         [
-          iconBtn({ id: 'act-rename-dim', icon: 'edit', title: 'Renommer la dimension', allowed: canBoth('dimension', dimPerm, 'W') }),
-          iconBtn({ id: 'act-del-dim', icon: 'del', title: 'Supprimer la dimension', extraClass: 'btn-danger', allowed: canBoth('dimension', dimPerm, 'D') }),
+          iconBtn({ id: 'act-rename-dim', icon: 'edit', title: t('Renommer la dimension'), allowed: canBoth('dimension', dimPerm, 'W') }),
+          iconBtn({ id: 'act-del-dim', icon: 'del', title: t('Supprimer la dimension'), extraClass: 'btn-danger', allowed: canBoth('dimension', dimPerm, 'D') }),
         ].join('')
       ) +
       '<div class="panel">' +
-      '<div class="panel-heading"><h3>Éléments</h3>' +
-      iconBtn({ id: 'act-new-el', icon: 'add', title: 'Nouvel élément', extraClass: 'btn-primary', allowed: canNewEl }) +
+      '<div class="panel-heading"><h3>' + t('Éléments') + '</h3>' +
+      iconBtn({ id: 'act-new-el', icon: 'add', title: t('Nouvel élément'), extraClass: 'btn-primary', allowed: canNewEl }) +
       '</div>' +
-      '<div id="el-host" class="muted">Chargement…</div></div>';
+      introHtml(t('Valeurs possibles de cette dimension (y compris les mesures). Ajoutez, renommez ou consolidez ici.')) +
+      '<div id="el-host" class="muted">' + t('Chargement…') + '</div></div>';
 
     onClickIf('act-rename-dim', function () {
-      promptName('Renommer la dimension', 'Nouveau nom', sel.dimensionName).then(function (name) {
+      promptName(t('Renommer la dimension'), t('Nouveau nom'), sel.dimensionName).then(function (name) {
         if (!name) return;
         return state.client.renameDimension(sel.databaseId, sel.dimensionId, name).then(function () {
-          toast('Dimension renommée.', 'ok');
+          toast(t('Dimension renommée.'), 'ok');
           return refreshAll({
             type: 'dimension',
             databaseId: sel.databaseId,
@@ -741,11 +868,11 @@
       }).catch(showErr);
     });
     onClickIf('act-del-dim', function () {
-      if (!confirmAction('Supprimer la dimension « ' + sel.dimensionName + ' » ?')) return;
+      if (!confirmAction(t('Supprimer la dimension « {name} » ?', { name: sel.dimensionName }))) return;
       state.client
         .destroyDimension(sel.databaseId, sel.dimensionId)
         .then(function () {
-          toast('Dimension supprimée.', 'ok');
+          toast(t('Dimension supprimée.'), 'ok');
           return refreshAll({
             type: 'folder',
             folder: 'dimensions',
@@ -771,14 +898,15 @@
     host.className = 'panel';
     host.id = 'attr-panel';
     host.innerHTML =
-      '<div class="panel-heading"><h3>Attributs</h3><span id="attr-heading-actions"></span></div>' +
-      '<div id="attr-host" class="muted">Chargement…</div>';
+      '<div class="panel-heading"><h3>' + t('Attributs') + '</h3><span id="attr-heading-actions"></span></div>' +
+      introHtml(t('Propriétés associées aux éléments (par ex. une description ou un code).')) +
+      '<div id="attr-host" class="muted">' + t('Chargement…') + '</div>';
     $('detail-panel').appendChild(host);
     return state.client.dimensionInfo(sel.databaseId, sel.dimensionId).then(function (info) {
       var attrDim = info.attributes_dimension;
       var attrCube = info.attributes_cube;
       if (!attrDim || attrDim === '' || attrDim === '-1') {
-        $('attr-host').innerHTML = '<p class="muted">Pas de dimension d’attributs pour cette dimension.</p>';
+        $('attr-host').innerHTML = '<p class="muted">' + t('Pas de dimension d’attributs pour cette dimension.') + '</p>';
         return;
       }
       return state.client.listElements(sel.databaseId, attrDim).then(function (attrs) {
@@ -789,7 +917,7 @@
           actions.innerHTML = iconBtn({
             id: 'act-new-attr',
             icon: 'add',
-            title: 'Nouvel attribut',
+            title: t('Nouvel attribut'),
             extraClass: 'btn-primary',
             allowed: canWriteAttr,
           });
@@ -806,16 +934,16 @@
             '<span class="badge">' +
             elementTypeLabel(a.type) +
             '</span><span class="tree-label"></span>' +
-            iconBtn({ dataAct: 'del', icon: 'del', title: 'Supprimer', extraClass: 'btn-danger', allowed: canDelThis });
+            iconBtn({ dataAct: 'del', icon: 'del', title: t('Supprimer'), extraClass: 'btn-danger', allowed: canDelThis });
           row.querySelector('.tree-label').textContent = a.name_element;
           var delBtn = row.querySelector('[data-act="del"]');
           if (delBtn) {
             delBtn.onclick = function () {
-              if (!confirmAction('Supprimer l’attribut « ' + a.name_element + ' » ?')) return;
+              if (!confirmAction(t('Supprimer l’attribut « {name} » ?', { name: a.name_element }))) return;
               state.client
                 .destroyElement(sel.databaseId, attrDim, a.element)
                 .then(function () {
-                  toast('Attribut supprimé.', 'ok');
+                  toast(t('Attribut supprimé.'), 'ok');
                   return renderDetail();
                 })
                 .catch(showErr);
@@ -824,7 +952,7 @@
           li.appendChild(row);
           ul.appendChild(li);
         });
-        if (!attrs.length) ul.innerHTML = '<li class="muted">Aucun attribut.</li>';
+        if (!attrs.length) ul.innerHTML = '<li class="muted">' + t('Aucun attribut.') + '</li>';
         onClickIf('act-new-attr', function () {
           openModal(
             'Nouvel attribut',
@@ -832,14 +960,14 @@
               '<label>Type<select id="attr-type"><option value="1">Numérique</option><option value="2">Texte</option></select></label>',
             function () {
               var name = ($('attr-name').value || '').trim();
-              if (!name) throw new Error('Nom requis.');
+              if (!name) throw new Error(t('Nom requis.'));
               return { name: name, type: parseInt($('attr-type').value, 10) };
             }
           )
             .then(function (data) {
               if (!data) return;
               return state.client.createElement(sel.databaseId, attrDim, data.name, data.type).then(function () {
-                toast('Attribut créé.', 'ok');
+                toast(t('Attribut créé.'), 'ok');
                 return renderDetail();
               });
             })
@@ -849,10 +977,10 @@
         if (attrCube) {
           var note = document.createElement('p');
           note.className = 'muted';
-          note.textContent =
-            'Les valeurs d’attributs se saisissent dans le cube d’attributs (#' +
-            attrCube +
-            '). Édition cellule par cellule prévue en raffinement.';
+          note.textContent = t(
+            'Les valeurs se renseignent ensuite dans le cube d’attributs associé (#{id}).',
+            { id: attrCube }
+          );
           $('attr-host').appendChild(note);
         }
       });
@@ -901,7 +1029,7 @@
 
   function renderElementTree(host, rows) {
     if (!rows.length) {
-      host.innerHTML = '<p class="muted">Aucun élément. Les « mesures » sont des éléments numériques d’une dimension (ex. Mesures).</p>';
+      host.innerHTML = '<p class="muted">' + t('Aucun élément pour l’instant. Ajoutez-en avec le bouton +.') + '</p>';
       return;
     }
     var forest = buildElementForest(rows);
@@ -926,9 +1054,9 @@
       '<span class="badge">' +
       elementTypeLabel(node.type) +
       '</span><span class="tree-label"></span>' +
-      iconBtn({ dataAct: 'cons', icon: 'consolidate', title: 'Consolidation…', allowed: canCons }) +
-      iconBtn({ dataAct: 'rename', icon: 'edit', title: 'Renommer', allowed: canRen }) +
-      iconBtn({ dataAct: 'del', icon: 'del', title: 'Supprimer', extraClass: 'btn-danger', allowed: canDel });
+      iconBtn({ dataAct: 'cons', icon: 'consolidate', title: t('Consolidation…'), allowed: canCons }) +
+      iconBtn({ dataAct: 'rename', icon: 'edit', title: t('Renommer'), allowed: canRen }) +
+      iconBtn({ dataAct: 'del', icon: 'del', title: t('Supprimer'), extraClass: 'btn-danger', allowed: canDel });
     row.querySelector('.tree-label').textContent = node.name_element;
     row.addEventListener('click', function (e) {
       if (e.target.closest && e.target.closest('[data-act]')) return;
@@ -955,10 +1083,10 @@
       renBtn.onclick = function (e) {
         e.stopPropagation();
         var sel = state.selection;
-        promptName('Renommer l’élément', 'Nouveau nom', node.name_element).then(function (name) {
+        promptName(t('Renommer l’élément'), t('Nouveau nom'), node.name_element).then(function (name) {
           if (!name) return;
           return state.client.renameElement(sel.databaseId, sel.dimensionId, node.element, name).then(function () {
-            toast('Élément renommé.', 'ok');
+            toast(t('Élément renommé.'), 'ok');
             return renderDetail();
           });
         }).catch(showErr);
@@ -968,12 +1096,12 @@
     if (delBtn) {
       delBtn.onclick = function (e) {
         e.stopPropagation();
-        if (!confirmAction('Supprimer l’élément « ' + node.name_element + ' » ?')) return;
+        if (!confirmAction(t('Supprimer l’élément « {name} » ?', { name: node.name_element }))) return;
         var sel = state.selection;
         state.client
           .destroyElement(sel.databaseId, sel.dimensionId, node.element)
           .then(function () {
-            toast('Élément supprimé.', 'ok');
+            toast(t('Élément supprimé.'), 'ok');
             return renderDetail();
           })
           .catch(showErr);
@@ -1002,31 +1130,32 @@
       headerHtml(
         sel.cubeName,
         [
-          iconBtn({ id: 'act-rename-cube', icon: 'edit', title: 'Renommer le cube', allowed: canBoth('cube', cubePerm, 'W') }),
-          iconBtn({ id: 'act-clear-cube', icon: 'clear', title: 'Vider les valeurs', extraClass: 'btn-danger', allowed: canClear }),
-          iconBtn({ id: 'act-del-cube', icon: 'del', title: 'Supprimer le cube', extraClass: 'btn-danger', allowed: canBoth('cube', cubePerm, 'D') }),
+          iconBtn({ id: 'act-rename-cube', icon: 'edit', title: t('Renommer le cube'), allowed: canBoth('cube', cubePerm, 'W') }),
+          iconBtn({ id: 'act-clear-cube', icon: 'clear', title: t('Vider les valeurs'), extraClass: 'btn-danger', allowed: canClear }),
+          iconBtn({ id: 'act-del-cube', icon: 'del', title: t('Supprimer le cube'), extraClass: 'btn-danger', allowed: canBoth('cube', cubePerm, 'D') }),
         ].join('')
       ) +
-      '<div class="panel"><h3>Dimensions du cube</h3>' +
-      '<p class="muted">Les axes d’un cube sont fixés à la création (API Palo) : on ne peut pas en ajouter ni en retirer ensuite. Pour changer le modèle, créer un nouveau cube.</p>' +
+      '<div class="panel"><h3>' + t('Dimensions du cube') + '</h3>' +
+      introHtml(t('Ces dimensions forment les axes du cube ; elles sont fixées à la création.')) +
       '<ol id="cube-dims" class="meta-list"></ol><p id="cube-meta" class="muted"></p></div>' +
       '<div class="panel">' +
-      '<div class="panel-heading"><h3>Règles</h3>' +
+      '<div class="panel-heading"><h3>' + t('Règles') + '</h3>' +
       iconBtn({
         id: 'act-new-rule',
         icon: 'add',
-        title: 'Nouvelle règle',
+        title: t('Nouvelle règle'),
         extraClass: 'btn-primary',
         allowed: canNewRule,
       }) +
       '</div>' +
-      '<div id="rules-host" class="muted">Chargement…</div></div>';
+      introHtml(t('Les règles calculent automatiquement certaines cellules du cube.')) +
+      '<div id="rules-host" class="muted">' + t('Chargement…') + '</div></div>';
 
     onClickIf('act-rename-cube', function () {
-      promptName('Renommer le cube', 'Nouveau nom', sel.cubeName).then(function (name) {
+      promptName(t('Renommer le cube'), t('Nouveau nom'), sel.cubeName).then(function (name) {
         if (!name) return;
         return state.client.renameCube(sel.databaseId, sel.cubeId, name).then(function () {
-          toast('Cube renommé.', 'ok');
+          toast(t('Cube renommé.'), 'ok');
           return refreshAll({
             type: 'cube',
             databaseId: sel.databaseId,
@@ -1038,11 +1167,11 @@
       }).catch(showErr);
     });
     onClickIf('act-clear-cube', function () {
-      if (!confirmAction('Vider toutes les valeurs du cube « ' + sel.cubeName + ' » ?')) return;
+      if (!confirmAction(t('Vider toutes les valeurs du cube « {name} » ?', { name: sel.cubeName }))) return;
       state.client
         .clearCube(sel.databaseId, sel.cubeId)
         .then(function () {
-          toast('Cube vidé.', 'ok');
+          toast(t('Cube vidé.'), 'ok');
           return renderDetail();
         })
         .catch(showErr);
@@ -1051,11 +1180,11 @@
       return ruleEditFlow(sel, null);
     });
     onClickIf('act-del-cube', function () {
-      if (!confirmAction('Supprimer le cube « ' + sel.cubeName + ' » ?')) return;
+      if (!confirmAction(t('Supprimer le cube « {name} » ?', { name: sel.cubeName }))) return;
       state.client
         .destroyCube(sel.databaseId, sel.cubeId)
         .then(function () {
-          toast('Cube supprimé.', 'ok');
+          toast(t('Cube supprimé.'), 'ok');
           return refreshAll({
             type: 'folder',
             folder: 'cubes',
@@ -1089,11 +1218,10 @@
         li.textContent = dim ? dim.name_dimension : 'dimension #' + id;
         ol.appendChild(li);
       });
-      $('cube-meta').textContent =
-        'Cellules remplies : ' +
-        (info.number_filled_cells != null ? info.number_filled_cells : '—') +
-        ' / ' +
-        (info.number_cells != null ? info.number_cells : '—');
+      $('cube-meta').textContent = t('Cellules remplies : {filled} / {total}', {
+        filled: info.number_filled_cells != null ? info.number_filled_cells : '—',
+        total: info.number_cells != null ? info.number_cells : '—',
+      });
       renderRulesList(sel, rules);
     });
   }
@@ -1104,7 +1232,7 @@
     var canDelete = roleCan('rule', 'D');
     if (!rules.length) {
       host.innerHTML =
-        '<p class="muted">Aucune règle. Utilisez le bouton « + » à côté de Règles.</p>';
+        '<p class="muted">' + t('Aucune règle pour l’instant. Créez-en une avec le bouton +.') + '</p>';
       return;
     }
     var sorted = rules.slice().sort(function (a, b) {
@@ -1119,7 +1247,7 @@
       row.innerHTML =
         '<code class="tree-label" style="font-size:0.85rem"></code>' +
         '<label class="switch" title="' +
-        (isActive ? 'Désactiver la règle' : 'Activer la règle') +
+        escapeAttr(isActive ? t('Désactiver la règle') : t('Activer la règle')) +
         '">' +
         '<input type="checkbox" data-act="tog"' +
         (isActive ? ' checked' : '') +
@@ -1127,10 +1255,10 @@
         ' />' +
         '<span class="switch-slider"></span>' +
         '</label>' +
-        iconBtn({ dataAct: 'edit', icon: 'edit', title: 'Éditer la règle', allowed: canWrite }) +
-        iconBtn({ dataAct: 'up', icon: 'up', title: 'Monter', allowed: canWrite }) +
-        iconBtn({ dataAct: 'down', icon: 'down', title: 'Descendre', allowed: canWrite }) +
-        iconBtn({ dataAct: 'del', icon: 'del', title: 'Supprimer', extraClass: 'btn-danger', allowed: canDelete });
+        iconBtn({ dataAct: 'edit', icon: 'edit', title: t('Éditer la règle'), allowed: canWrite }) +
+        iconBtn({ dataAct: 'up', icon: 'up', title: t('Monter'), allowed: canWrite }) +
+        iconBtn({ dataAct: 'down', icon: 'down', title: t('Descendre'), allowed: canWrite }) +
+        iconBtn({ dataAct: 'del', icon: 'del', title: t('Supprimer'), extraClass: 'btn-danger', allowed: canDelete });
       row.querySelector('code').textContent = rule.definition;
       var editBtn = row.querySelector('[data-act="edit"]');
       if (editBtn) {
@@ -1189,11 +1317,11 @@
       var delRuleBtn = row.querySelector('[data-act="del"]');
       if (delRuleBtn) {
         delRuleBtn.onclick = function () {
-          if (!confirmAction('Supprimer cette règle ?')) return;
+          if (!confirmAction(t('Supprimer cette règle ?'))) return;
           state.client
             .destroyRule(sel.databaseId, sel.cubeId, rule.rule)
             .then(function () {
-              toast('Règle supprimée.', 'ok');
+              toast(t('Règle supprimée.'), 'ok');
               return renderDetail();
             })
             .catch(showErr);
@@ -1287,16 +1415,16 @@
       var d = (definition || '').trim();
       if (!d) {
         outEl.className = 'muted rule-check-out';
-        outEl.textContent = 'Définition vide.';
+        outEl.textContent = t('Définition vide.');
         return Promise.resolve(false);
       }
       outEl.className = 'muted rule-check-out';
-      outEl.textContent = 'Vérification…';
+      outEl.textContent = t('Vérification…');
       return state.client
         .parseRule(sel.databaseId, sel.cubeId, d)
         .then(function () {
           outEl.className = 'rule-check-out ok';
-          outEl.textContent = 'OK';
+          outEl.textContent = t('OK');
           return true;
         })
         .catch(function (e) {
@@ -1319,19 +1447,27 @@
       })
       .then(function (refTree) {
         var p = openModal(
-          existing ? 'Modifier la règle' : 'Nouvelle règle',
+          existing ? t('Modifier la règle') : t('Nouvelle règle'),
           '<div class="rule-editor-root" id="rule-editor-root">' +
-            '<div class="muted" style="font-size:0.9rem">Définition</div>' +
-            '<textarea id="rule-def" rows="7" placeholder="[\'Dim\':\'Élément\'] = [\'Dim\':\'Élément\'] * 1"></textarea>' +
+            '<div class="muted" style="font-size:0.9rem">' +
+            t('Définition') +
             '</div>' +
-            '<label>Commentaire<input id="rule-comment" type="text" /></label>' +
+            '<textarea id="rule-def" rows="7" placeholder="' +
+            escapeAttr(t('[\'Dim\':\'Élément\'] = [\'Dim\':\'Élément\'] * 1')) +
+            '"></textarea>' +
+            '</div>' +
+            '<label>' +
+            t('Commentaire') +
+            '<input id="rule-comment" type="text" /></label>' +
             '<div class="detail-actions">' +
-            '<button type="button" class="btn btn-small" id="rule-check">Vérifier</button>' +
+            '<button type="button" class="btn btn-small" id="rule-check">' +
+            t('Vérifier') +
+            '</button>' +
             '</div>' +
             '<p id="rule-check-out" class="muted rule-check-out"></p>',
           function () {
             var definition = editor ? editor.getDefinition() : ($('rule-def').value || '').trim();
-            if (!definition) throw new Error('Définition requise.');
+            if (!definition) throw new Error(t('Définition requise.'));
             var comment = ($('rule-comment').value || '').trim();
             var outEl = $('rule-check-out');
             return runParse(definition, outEl).then(function (ok) {
@@ -1391,25 +1527,51 @@
 
   function renderAdminRoot(panel) {
     panel.innerHTML =
-      headerHtml('Administration') +
-      '<div class="panel"><p>Utilisateurs, groupes, rôles et droits (base System) — matrices d’appartenance et de permissions.</p>' +
-      '<ul class="meta-list">' +
-      '<li><strong>Utilisateurs</strong> : appartenance aux groupes</li>' +
-      '<li><strong>Groupes</strong> : rôles affectés aux groupes</li>' +
-      '<li><strong>Rôles</strong> : niveaux d’accès (N/R/W/D/S) par rôle</li>' +
-      '</ul></div>';
+      headerHtml(t('Administration')) +
+      '<div class="panel">' +
+      introHtml(t('Gérez les comptes, les groupes et les permissions d’accès.')) +
+      '<ul class="meta-list" id="admin-root-list"></ul></div>';
+    var ul = $('admin-root-list');
+    [
+      { folder: 'users', label: t('Utilisateurs'), right: 'user' },
+      { folder: 'groups', label: t('Groupes'), right: 'group' },
+      { folder: 'roles', label: t('Rôles'), right: 'rights' },
+    ]
+      .filter(function (entry) {
+        return roleCan(entry.right, 'R');
+      })
+      .forEach(function (entry) {
+        var li = document.createElement('li');
+        var a = document.createElement('a');
+        a.href = '#';
+        a.textContent = entry.label;
+        a.onclick = function (e) {
+          e.preventDefault();
+          setOpen('admin', true);
+          setOpen('admin:' + entry.folder, true);
+          selectNode({ type: 'admin-folder', folder: entry.folder });
+        };
+        li.appendChild(a);
+        ul.appendChild(li);
+      });
     return Promise.resolve();
   }
 
   function renderAdminFolder(panel, sel) {
     var sys = state.system;
     if (!sys) {
-      panel.innerHTML = '<p class="error">Base System introuvable.</p>';
+      panel.innerHTML = '<p class="error">' + t('Base System introuvable.') + '</p>';
       return Promise.resolve();
     }
     if (sel.folder === 'users') return renderAdminUsers(panel, sys);
+    if (sel.folder === 'user-groups') return renderAdminUserGroups(panel, sys);
     if (sel.folder === 'groups') return renderAdminGroups(panel, sys);
+    if (sel.folder === 'group-roles') return renderAdminGroupRoles(panel, sys);
     if (sel.folder === 'roles' || sel.folder === 'rights') return renderAdminRoles(panel, sys);
+    if (sel.folder === 'role-rights') return renderAdminRoleRights(panel, sys);
+    if (sel.folder === 'access-db') return renderAdminAccessDatabases(panel, sys);
+    if (sel.folder === 'access-cube') return renderAdminAccessCubes(panel, sys);
+    if (sel.folder === 'access-dim') return renderAdminAccessDimensions(panel, sys);
     panel.innerHTML = '';
     return Promise.resolve();
   }
@@ -1430,7 +1592,7 @@
     var onToggle = opts.onToggle;
 
     if (!rows.length || !cols.length) {
-      host.innerHTML = '<p class="muted">Aucune donnée à afficher.</p>';
+      host.innerHTML = '<p class="muted">' + t('Aucune donnée à afficher.') + '</p>';
       return;
     }
 
@@ -1493,18 +1655,20 @@
     host.appendChild(wrap);
   }
 
-  /** Matrice droits N/R/W/D/S — objets en lignes, rôles en colonnes. */
+  /** Matrice droits N/R/W/D/S — lignes × colonnes (éléments name_element / element). */
   function renderRightsLevelMatrix(host, opts) {
     var objs = opts.rows || [];
-    var roles = opts.cols || [];
+    var cols = opts.cols || [];
     var cellMap = opts.cellMap || {};
     var canWrite = !!opts.canWrite;
     var pathFn = opts.pathFn;
     var onChange = opts.onChange;
-    var levels = ['N', 'R', 'W', 'D', 'S'];
+    var rowHead = opts.rowHead != null ? opts.rowHead : 'Accès';
+    var allowEmpty = !!opts.allowEmpty;
+    var levels = allowEmpty ? ['', 'N', 'R', 'W', 'D', 'S'] : ['N', 'R', 'W', 'D', 'S'];
 
-    if (!objs.length || !roles.length) {
-      host.innerHTML = '<p class="muted">Aucune donnée à afficher.</p>';
+    if (!objs.length || !cols.length) {
+      host.innerHTML = '<p class="muted">' + t('Aucune donnée à afficher.') + '</p>';
       return;
     }
 
@@ -1514,8 +1678,8 @@
     table.className = 'rights-matrix';
     var thead = document.createElement('thead');
     var hr = document.createElement('tr');
-    hr.innerHTML = '<th class="row-head">Accès</th>';
-    roles.forEach(function (c) {
+    hr.innerHTML = '<th class="row-head">' + escapeHtml(rowHead) + '</th>';
+    cols.forEach(function (c) {
       var th = document.createElement('th');
       th.textContent = c.name_element;
       th.title = c.name_element;
@@ -1532,18 +1696,24 @@
       th.textContent = obj.name_element;
       th.title = obj.name_element;
       tr.appendChild(th);
-      roles.forEach(function (role) {
+      cols.forEach(function (col) {
         var td = document.createElement('td');
-        var path = pathFn(obj, role);
-        var cur = String(cellMap[path] || 'N').toUpperCase();
-        if (levels.indexOf(cur) < 0) cur = 'N';
+        var path = pathFn(obj, col);
+        var raw = cellMap[path];
+        var cur =
+          raw == null || raw === ''
+            ? allowEmpty
+              ? ''
+              : 'N'
+            : String(raw).toUpperCase();
+        if (cur && levels.indexOf(cur) < 0) cur = allowEmpty ? '' : 'N';
         var sel = document.createElement('select');
         sel.className = 'right-level';
         sel.disabled = !canWrite;
         levels.forEach(function (lv) {
           var o = document.createElement('option');
           o.value = lv;
-          o.textContent = lv;
+          o.textContent = rightLabels()[lv] != null ? rightLabels()[lv] : lv;
           if (lv === cur) o.selected = true;
           sel.appendChild(o);
         });
@@ -1551,7 +1721,7 @@
           var next = sel.value;
           var prev = cur;
           sel.disabled = true;
-          Promise.resolve(onChange(path, next, obj, role))
+          Promise.resolve(onChange(path, next, obj, col))
             .then(function () {
               cur = next;
               cellMap[path] = next;
@@ -1581,11 +1751,11 @@
 
   function renderAdminUsers(panel, sys) {
     if (!sys.usersDim) {
-      panel.innerHTML = '<p class="error">Dimension #_USER_ absente.</p>';
+      panel.innerHTML = '<p class="error">' + t('Dimension #_USER_ absente.') + '</p>';
       return Promise.resolve();
     }
     if (!roleCan('user', 'R')) {
-      panel.innerHTML = '<p class="error">Droit insuffisant pour lister les utilisateurs.</p>';
+      panel.innerHTML = '<p class="error">' + t('Droit insuffisant pour lister les utilisateurs.') + '</p>';
       return Promise.resolve();
     }
     var canCreate = roleCan('user', 'W');
@@ -1593,21 +1763,23 @@
     var canDel = roleCan('user', 'D');
     panel.innerHTML =
       headerHtml(
-        'Utilisateurs',
-        iconBtn({ id: 'act-new-user', icon: 'add', title: 'Nouvel utilisateur', extraClass: 'btn-primary', allowed: canCreate })
+        t('Utilisateurs'),
+        iconBtn({ id: 'act-new-user', icon: 'add', title: t('Nouvel utilisateur'), extraClass: 'btn-primary', allowed: canCreate })
       ) +
-      '<div class="panel"><div id="users-host" class="muted">Chargement…</div></div>';
+      '<div class="panel">' +
+      introHtml(t('Comptes pouvant se connecter. Créez un utilisateur, changez un mot de passe ou supprimez un compte.')) +
+      '<div id="users-host" class="muted">' + t('Chargement…') + '</div></div>';
     onClickIf('act-new-user', function () {
       openModal(
-        'Nouvel utilisateur',
+        t('Nouvel utilisateur'),
         '<label>Identifiant<input id="u-name" type="text" /></label>' +
           '<label>Mot de passe initial<input id="u-pass" type="password" /></label>',
         function () {
           var name = ($('u-name').value || '').trim();
           var pass = $('u-pass').value;
-          if (!name) throw new Error('Identifiant requis.');
-          if (!pass) throw new Error('Mot de passe requis.');
-          if (BUILTIN_USERS[name.toLowerCase()]) throw new Error('Identifiant réservé.');
+          if (!name) throw new Error(t('Identifiant requis.'));
+          if (!pass) throw new Error(t('Mot de passe requis.'));
+          if (BUILTIN_USERS[name.toLowerCase()]) throw new Error(t('Identifiant réservé.'));
           return { name: name, pass: pass };
         }
       )
@@ -1619,31 +1791,13 @@
               return state.client.changePassword(data.name, data.pass);
             })
             .then(function () {
-              toast('Utilisateur créé.', 'ok');
+              toast(t('Utilisateur créé.'), 'ok');
               return renderDetail();
             });
         })
         .catch(showErr);
     });
-    panel.querySelector('#users-host').parentElement.insertAdjacentHTML(
-      'afterend',
-      '<div class="panel"><h3 class="admin-section-title">Appartenance aux groupes</h3>' +
-        '<p class="muted">Lignes = utilisateurs, colonnes = groupes. Case cochée = membre du groupe.</p>' +
-        '<div id="user-group-matrix" class="muted">Chargement…</div></div>'
-    );
-
-    return Promise.all([
-      state.client.listElements(sys.databaseId, sys.usersDim.dimension),
-      sys.groupsDim
-        ? state.client.listElements(sys.databaseId, sys.groupsDim.dimension)
-        : Promise.resolve([]),
-      sys.userGroupCube
-        ? state.client.exportCells(sys.databaseId, sys.userGroupCube.cube)
-        : Promise.resolve({}),
-    ]).then(function (triple) {
-      var users = triple[0];
-      var groups = triple[1];
-      var cellMap = triple[2];
+    return state.client.listElements(sys.databaseId, sys.usersDim.dimension).then(function (users) {
       var host = $('users-host');
       host.innerHTML = '';
       users.forEach(function (u) {
@@ -1652,11 +1806,11 @@
         var builtin = !!BUILTIN_USERS[String(u.name_element).toLowerCase()];
         row.innerHTML =
           '<span class="tree-label"></span>' +
-          iconBtn({ dataAct: 'pwd', icon: 'password', title: 'Mot de passe', allowed: canPwd }) +
+          iconBtn({ dataAct: 'pwd', icon: 'password', title: t('Mot de passe'), allowed: canPwd }) +
           iconBtn({
             dataAct: 'del',
             icon: 'del',
-            title: 'Supprimer',
+            title: t('Supprimer'),
             extraClass: 'btn-danger',
             allowed: !builtin && canDel && objCan(u.permission, 'D'),
           });
@@ -1665,18 +1819,18 @@
         if (pwdBtn) {
           pwdBtn.onclick = function () {
             openModal(
-              'Mot de passe — ' + u.name_element,
+              t('Mot de passe — {name}', { name: u.name_element }),
               '<label>Nouveau mot de passe<input id="u-pass" type="password" /></label>',
               function () {
                 var pass = $('u-pass').value;
-                if (!pass) throw new Error('Mot de passe requis.');
+                if (!pass) throw new Error(t('Mot de passe requis.'));
                 return pass;
               }
             )
               .then(function (pass) {
                 if (!pass) return;
                 return state.client.changePassword(u.name_element, pass).then(function () {
-                  toast('Mot de passe mis à jour.', 'ok');
+                  toast(t('Mot de passe mis à jour.'), 'ok');
                 });
               })
               .catch(showErr);
@@ -1685,11 +1839,11 @@
         var del = row.querySelector('[data-act="del"]');
         if (del) {
           del.onclick = function () {
-            if (!confirmAction('Supprimer l’utilisateur « ' + u.name_element + ' » ?')) return;
+            if (!confirmAction(t('Supprimer l’utilisateur « {name} » ?', { name: u.name_element }))) return;
             state.client
               .destroyElement(sys.databaseId, sys.usersDim.dimension, u.element)
               .then(function () {
-                toast('Utilisateur supprimé.', 'ok');
+                toast(t('Utilisateur supprimé.'), 'ok');
                 return renderDetail();
               })
               .catch(showErr);
@@ -1697,33 +1851,52 @@
         }
         host.appendChild(row);
       });
+    });
+  }
 
-      var matrixHost = $('user-group-matrix');
-      if (!sys.userGroupCube || !sys.groupsDim) {
-        matrixHost.innerHTML = '<p class="error">Cube #_USER_GROUP introuvable.</p>';
-        return;
-      }
+  /** Sous-menu Utilisateurs → Appartenance groupes (user ↔ groupe). */
+  function renderAdminUserGroups(panel, sys) {
+    if (!roleCan('user', 'R') && !roleCan('group', 'R')) {
+      panel.innerHTML = '<p class="error">' + t('Droit insuffisant.') + '</p>';
+      return Promise.resolve();
+    }
+    if (!sys.usersDim || !sys.groupsDim || !sys.userGroupCube) {
+      panel.innerHTML =
+        '<p class="error">' + t('Cube #_USER_GROUP ou dimensions utilisateur/groupe introuvables.') + '</p>';
+      return Promise.resolve();
+    }
+    panel.innerHTML =
+      headerHtml(t('Utilisateurs → groupes')) +
+      '<div class="panel">' +
+      introHtml(t('Cochez les cases pour indiquer à quels groupes appartient chaque utilisateur.')) +
+      '<div id="user-group-matrix" class="muted">' + t('Chargement…') + '</div></div>';
+
+    return Promise.all([
+      state.client.listElements(sys.databaseId, sys.usersDim.dimension),
+      state.client.listElements(sys.databaseId, sys.groupsDim.dimension),
+      state.client.exportCells(sys.databaseId, sys.userGroupCube.cube),
+    ]).then(function (triple) {
       var canWriteUg = roleCan('user', 'W') || roleCan('group', 'W');
-      renderCheckboxMatrix(matrixHost, {
-        rows: users,
-        cols: groups,
-        cellMap: cellMap,
+      renderCheckboxMatrix($('user-group-matrix'), {
+        rows: triple[0],
+        cols: triple[1],
+        cellMap: triple[2],
         canWrite: canWriteUg,
         pathFn: function (user, group) {
           return user.element + ',' + group.element;
         },
         onToggle: function (path, on) {
           return setMembershipCell(sys, sys.userGroupCube, path, on).then(function () {
-            toast(on ? 'Groupe associé.' : 'Groupe retiré.', 'ok');
+            toast(on ? t('Groupe associé.') : t('Groupe retiré.'), 'ok');
           });
         },
       });
     });
   }
 
-  function renderAdminNamedDim(panel, title, dim, createLabel, rightKey) {
+  function renderAdminNamedDim(panel, title, dim, createLabel, rightKey, intro) {
     if (!roleCan(rightKey, 'R')) {
-      panel.innerHTML = '<p class="error">Droit insuffisant.</p>';
+      panel.innerHTML = '<p class="error">' + t('Droit insuffisant.') + '</p>';
       return Promise.resolve();
     }
     var canCreate = roleCan(rightKey, 'W');
@@ -1731,18 +1904,20 @@
     var canDel = roleCan(rightKey, 'D');
     panel.innerHTML =
       headerHtml(
-        title,
+        t(title),
         iconBtn({
           id: 'act-new-named',
           icon: 'add',
-          title: 'Nouveau — ' + createLabel,
+          title: t('Nouveau — {label}', { label: t(createLabel) }),
           extraClass: 'btn-primary',
           allowed: canCreate,
         })
       ) +
-      '<div class="panel"><div id="named-host" class="muted">Chargement…</div></div>';
+      '<div class="panel">' +
+      introHtml(intro || '') +
+      '<div id="named-host" class="muted">' + t('Chargement…') + '</div></div>';
     onClickIf('act-new-named', function () {
-      promptName('Nouveau — ' + createLabel, 'Nom', '').then(function (name) {
+      promptName(t('Nouveau — {label}', { label: createLabel }), t('Nom'), '').then(function (name) {
         if (!name) return;
         return state.client.createElement(state.system.databaseId, dim.dimension, name, ELEMENT_STRING).then(function () {
           toast(createLabel + ' créé.', 'ok');
@@ -1762,13 +1937,13 @@
           iconBtn({
             dataAct: 'ren',
             icon: 'edit',
-            title: 'Renommer',
+            title: t('Renommer'),
             allowed: canRen && objCan(r.permission, 'W'),
           }) +
           iconBtn({
             dataAct: 'del',
             icon: 'del',
-            title: 'Supprimer',
+            title: t('Supprimer'),
             extraClass: 'btn-danger',
             allowed: !builtin && canDel && objCan(r.permission, 'D'),
           });
@@ -1776,12 +1951,12 @@
         var ren = row.querySelector('[data-act="ren"]');
         if (ren) {
           ren.onclick = function () {
-            promptName('Renommer', 'Nouveau nom', r.name_element).then(function (name) {
+            promptName(t('Renommer'), t('Nouveau nom'), r.name_element).then(function (name) {
               if (!name) return;
               return state.client
                 .renameElement(state.system.databaseId, dim.dimension, r.element, name)
                 .then(function () {
-                  toast('Renommé.', 'ok');
+                  toast(t('Renommé.'), 'ok');
                   return renderDetail();
                 });
             }).catch(showErr);
@@ -1790,11 +1965,11 @@
         var del = row.querySelector('[data-act="del"]');
         if (del) {
           del.onclick = function () {
-            if (!confirmAction('Supprimer « ' + r.name_element + ' » ?')) return;
+            if (!confirmAction(t('Supprimer « {name} » ?', { name: r.name_element }))) return;
             state.client
               .destroyElement(state.system.databaseId, dim.dimension, r.element)
               .then(function () {
-                toast('Supprimé.', 'ok');
+                toast(t('Supprimé.'), 'ok');
                 return renderDetail();
               })
               .catch(showErr);
@@ -1807,98 +1982,462 @@
 
   function renderAdminGroups(panel, sys) {
     if (!sys.groupsDim) {
-      panel.innerHTML = '<p class="error">Dimension #_GROUP_ absente.</p>';
+      panel.innerHTML = '<p class="error">' + t('Dimension #_GROUP_ absente.') + '</p>';
       return Promise.resolve();
     }
-    return renderAdminNamedDim(panel, 'Groupes', sys.groupsDim, 'Groupe', 'group').then(function () {
-      var extra = document.createElement('div');
-      extra.className = 'panel';
-      extra.innerHTML =
-        '<h3 class="admin-section-title">Rôles des groupes</h3>' +
-        '<p class="muted">Lignes = rôles, colonnes = groupes. Case cochée = le groupe possède ce rôle.</p>' +
-        '<div id="group-role-matrix" class="muted">Chargement…</div>';
-      panel.appendChild(extra);
-      if (!sys.groupRoleCube || !sys.rolesDim) {
-        $('group-role-matrix').innerHTML = '<p class="error">Cube #_GROUP_ROLE introuvable.</p>';
-        return;
-      }
-      return Promise.all([
-        state.client.listElements(sys.databaseId, sys.rolesDim.dimension),
-        state.client.listElements(sys.databaseId, sys.groupsDim.dimension),
-        state.client.exportCells(sys.databaseId, sys.groupRoleCube.cube),
-      ]).then(function (triple) {
-        var roles = triple[0];
-        var groups = triple[1];
-        var cellMap = triple[2];
-        var canWriteGr = roleCan('group', 'W') || roleCan('rights', 'W');
-        // Cube #_GROUP_ROLE : dimensions groupe, rôle → path = groupId,roleId
-        renderCheckboxMatrix($('group-role-matrix'), {
-          rows: roles,
-          cols: groups,
-          cellMap: cellMap,
-          canWrite: canWriteGr,
-          pathFn: function (role, group) {
-            return group.element + ',' + role.element;
-          },
-          onToggle: function (path, on) {
-            return setMembershipCell(sys, sys.groupRoleCube, path, on).then(function () {
-              toast(on ? 'Rôle associé.' : 'Rôle retiré.', 'ok');
-            });
-          },
-        });
+    return renderAdminNamedDim(
+      panel,
+      'Groupes',
+      sys.groupsDim,
+      'Groupe',
+      'group',
+      t('Les groupes rassemblent des utilisateurs pour leur donner les mêmes droits.')
+    );
+  }
+
+  /** Sous-menu Groupes → Rôles des groupes (groupe ↔ rôle). */
+  function renderAdminGroupRoles(panel, sys) {
+    if (!roleCan('group', 'R') && !roleCan('rights', 'R')) {
+      panel.innerHTML = '<p class="error">' + t('Droit insuffisant.') + '</p>';
+      return Promise.resolve();
+    }
+    if (!sys.groupsDim || !sys.rolesDim || !sys.groupRoleCube) {
+      panel.innerHTML =
+        '<p class="error">' + t('Cube #_GROUP_ROLE ou dimensions groupe/rôle introuvables.') + '</p>';
+      return Promise.resolve();
+    }
+    panel.innerHTML =
+      headerHtml(t('Groupes → rôles')) +
+      '<div class="panel">' +
+      introHtml(t('Cochez les cases pour associer un rôle (permissions) à chaque groupe.')) +
+      '<div id="group-role-matrix" class="muted">' + t('Chargement…') + '</div></div>';
+
+    return Promise.all([
+      state.client.listElements(sys.databaseId, sys.rolesDim.dimension),
+      state.client.listElements(sys.databaseId, sys.groupsDim.dimension),
+      state.client.exportCells(sys.databaseId, sys.groupRoleCube.cube),
+    ]).then(function (triple) {
+      var canWriteGr = roleCan('group', 'W') || roleCan('rights', 'W');
+      renderCheckboxMatrix($('group-role-matrix'), {
+        rows: triple[0],
+        cols: triple[1],
+        cellMap: triple[2],
+        canWrite: canWriteGr,
+        pathFn: function (role, group) {
+          return group.element + ',' + role.element;
+        },
+        onToggle: function (path, on) {
+          return setMembershipCell(sys, sys.groupRoleCube, path, on).then(function () {
+            toast(on ? t('Rôle associé.') : t('Rôle retiré.'), 'ok');
+          });
+        },
       });
     });
   }
 
   function renderAdminRoles(panel, sys) {
     if (!sys.rolesDim) {
-      panel.innerHTML = '<p class="error">Dimension #_ROLE_ absente.</p>';
+      panel.innerHTML = '<p class="error">' + t('Dimension #_ROLE_ absente.') + '</p>';
       return Promise.resolve();
     }
-    return renderAdminNamedDim(panel, 'Rôles', sys.rolesDim, 'Rôle', 'rights').then(function () {
-      var extra = document.createElement('div');
-      extra.className = 'panel';
-      extra.innerHTML =
-        '<h3 class="admin-section-title">Droits des rôles</h3>' +
-        '<p class="muted">Lignes = accès possibles, colonnes = rôles. Niveaux : ' +
-        '<code>N</code> none, <code>R</code> read, <code>W</code> write, <code>D</code> delete, <code>S</code> splash (cell data).</p>' +
-        '<div id="role-right-matrix" class="muted">Chargement…</div>';
-      panel.appendChild(extra);
+    return renderAdminNamedDim(
+      panel,
+      'Rôles',
+      sys.rolesDim,
+      'Rôle',
+      'rights',
+      t('Les rôles définissent ce que les utilisateurs ont le droit de faire.')
+    );
+  }
 
-      if (!sys.roleRightCube || !sys.rightObjDim) {
-        $('role-right-matrix').innerHTML = '<p class="error">Cube #_ROLE_RIGHT_OBJECT introuvable.</p>';
-        return;
-      }
-      if (!roleCan('rights', 'R')) {
-        $('role-right-matrix').innerHTML = '<p class="error">Droit insuffisant pour lire les droits.</p>';
-        return;
-      }
-      var canWrite = roleCan('rights', 'W');
-      return Promise.all([
-        state.client.listElements(sys.databaseId, sys.rightObjDim.dimension),
-        state.client.listElements(sys.databaseId, sys.rolesDim.dimension),
-        state.client.exportCells(sys.databaseId, sys.roleRightCube.cube),
-      ]).then(function (triple) {
-        var objs = triple[0];
-        var roles = triple[1];
-        var cellMap = triple[2];
-        // Cube #_ROLE_RIGHT_OBJECT : dimensions rôle, objet → path = roleId,objectId
-        renderRightsLevelMatrix($('role-right-matrix'), {
-          rows: objs,
-          cols: roles,
-          cellMap: cellMap,
-          canWrite: canWrite,
-          pathFn: function (obj, role) {
-            return role.element + ',' + obj.element;
-          },
-          onChange: function (path, val) {
-            return state.client.replaceCell(sys.databaseId, sys.roleRightCube.cube, path, val).then(function () {
-              toast('Droit « ' + val + ' » enregistré.', 'ok');
-            });
-          },
-        });
+  /** Sous-menu Rôles → Droits des rôles (rôle ↔ type d’objet). */
+  function renderAdminRoleRights(panel, sys) {
+    if (!roleCan('rights', 'R')) {
+      panel.innerHTML = '<p class="error">' + t('Droit insuffisant pour lire les droits.') + '</p>';
+      return Promise.resolve();
+    }
+    if (!sys.rolesDim || !sys.roleRightCube || !sys.rightObjDim) {
+      panel.innerHTML =
+        '<p class="error">' + t('Cube #_ROLE_RIGHT_OBJECT ou dimensions introuvables.') + '</p>';
+      return Promise.resolve();
+    }
+    var canWrite = roleCan('rights', 'W');
+    panel.innerHTML =
+      headerHtml(t('Rôles → droits')) +
+      '<div class="panel">' +
+      introHtml(
+        t('Pour chaque rôle, choisissez le niveau d’accès : aucun, lire, écrire, supprimer ou splash.')
+      ) +
+      '<div id="role-right-matrix" class="muted">' + t('Chargement…') + '</div></div>';
+
+    return Promise.all([
+      state.client.listElements(sys.databaseId, sys.rightObjDim.dimension),
+      state.client.listElements(sys.databaseId, sys.rolesDim.dimension),
+      state.client.exportCells(sys.databaseId, sys.roleRightCube.cube),
+    ]).then(function (triple) {
+      renderRightsLevelMatrix($('role-right-matrix'), {
+        rows: triple[0],
+        cols: triple[1],
+        cellMap: triple[2],
+        canWrite: canWrite,
+        pathFn: function (obj, role) {
+          return role.element + ',' + obj.element;
+        },
+        onChange: function (path, val) {
+          return state.client.replaceCell(sys.databaseId, sys.roleRightCube.cube, path, val).then(function () {
+            toast(t('Droit « {val} » enregistré.', { val: val }), 'ok');
+          });
+        },
       });
     });
+  }
+
+  /** Droits groupe × database — cube System #_GROUP_DATABASE_DATA. */
+  function renderAdminAccessDatabases(panel, sys) {
+    if (!roleCan('rights', 'R')) {
+      panel.innerHTML = '<p class="error">' + t('Droit insuffisant pour lire les droits.') + '</p>';
+      return Promise.resolve();
+    }
+    if (!sys.groupDatabaseCube || !sys.databaseDim || !sys.groupsDim) {
+      panel.innerHTML =
+        '<p class="error">' +
+        t('Cube #_GROUP_DATABASE_DATA ou dimensions #_DATABASE_ / #_GROUP_ introuvables.') +
+        '</p>';
+      return Promise.resolve();
+    }
+    var canWrite = roleCan('rights', 'W');
+    panel.innerHTML =
+      headerHtml(t('Groupes → databases')) +
+      '<div class="panel">' +
+      introHtml(
+        t('Indiquez, pour chaque groupe, ce qu’il peut faire sur chaque base de données. Le tiret laisse le défaut.')
+      ) +
+      '<div id="access-db-matrix" class="muted">' + t('Chargement…') + '</div></div>';
+
+    return Promise.all([
+      state.client.listElements(sys.databaseId, sys.databaseDim.dimension),
+      state.client.listElements(sys.databaseId, sys.groupsDim.dimension),
+      state.client.exportCells(sys.databaseId, sys.groupDatabaseCube.cube),
+    ]).then(function (triple) {
+      var databases = triple[0];
+      var groups = triple[1];
+      var cellMap = triple[2];
+      // #_GROUP_DATABASE_DATA : group, database → path = groupId,dbId
+      renderRightsLevelMatrix($('access-db-matrix'), {
+        rows: groups,
+        cols: databases,
+        cellMap: cellMap,
+        canWrite: canWrite,
+        allowEmpty: true,
+        rowHead: t('Groupe'),
+        pathFn: function (group, dbEl) {
+          return group.element + ',' + dbEl.element;
+        },
+        onChange: function (path, val) {
+          return state.client.replaceCell(sys.databaseId, sys.groupDatabaseCube.cube, path, val).then(function () {
+            toast(
+              val ? t('Droit database « {val} ».', { val: val }) : t('Droit database remis au défaut.'),
+              'ok'
+            );
+          });
+        },
+      });
+    });
+  }
+
+  /** Droits groupe × cube — #_GROUP_CUBE_DATA dans chaque database normale. */
+  function renderAdminAccessCubes(panel, sys) {
+    if (!roleCan('rights', 'R')) {
+      panel.innerHTML = '<p class="error">' + t('Droit insuffisant pour lire les droits.') + '</p>';
+      return Promise.resolve();
+    }
+    var canWrite = roleCan('rights', 'W');
+    var dbs = (state.databases || []).filter(isNormalDatabase);
+    if (!dbs.length) {
+      panel.innerHTML =
+        headerHtml(t('Accès cubes')) +
+        '<div class="panel"><p class="muted">' + t('Aucune database.') + '</p></div>';
+      return Promise.resolve();
+    }
+    if (!state.accessCubeDbId || !dbs.some(function (d) {
+      return String(d.database) === String(state.accessCubeDbId);
+    })) {
+      state.accessCubeDbId = dbs[0].database;
+    }
+
+    panel.innerHTML =
+      headerHtml(t('Groupes → cubes')) +
+      '<div class="panel">' +
+      introHtml(
+        t('Choisissez une base, puis indiquez ce que chaque groupe peut faire sur ses cubes. Le tiret laisse le défaut.')
+      ) +
+      '<label>' + t('Database') + '<select id="access-cube-db"></select></label>' +
+      '<div id="access-cube-matrix" class="muted">' + t('Chargement…') + '</div></div>';
+
+    var sel = $('access-cube-db');
+    dbs.forEach(function (db) {
+      var o = document.createElement('option');
+      o.value = db.database;
+      o.textContent = db.name_database;
+      if (String(db.database) === String(state.accessCubeDbId)) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.onchange = function () {
+      state.accessCubeDbId = sel.value;
+      loadAccessCubeMatrix($('access-cube-matrix'), state.accessCubeDbId, canWrite);
+    };
+
+    return loadAccessCubeMatrix($('access-cube-matrix'), state.accessCubeDbId, canWrite);
+  }
+
+  function loadAccessCubeMatrix(host, databaseId, canWrite) {
+    if (!host) return Promise.resolve();
+    host.className = 'muted';
+    host.textContent = t('Chargement…');
+
+    var sysOpts = {
+      show_normal: '1',
+      show_system: '1',
+      show_attribute: '0',
+      show_info: '0',
+    };
+
+    return Promise.all([
+      state.client.listCubes(databaseId, sysOpts),
+      state.client.listDimensions(databaseId, sysOpts),
+    ])
+      .then(function (pair) {
+        var cubes = pair[0];
+        var dims = pair[1];
+        var rightsCube = cubes.find(function (c) {
+          return c.name_cube === '#_GROUP_CUBE_DATA';
+        });
+        var cubeDim = dims.find(function (d) {
+          return d.name_dimension === '#_CUBE_';
+        });
+        var groupDim = dims.find(function (d) {
+          return d.name_dimension === '#_GROUP_';
+        });
+        if (!rightsCube || !cubeDim || !groupDim) {
+          host.innerHTML =
+            '<p class="error">' +
+            t('#_GROUP_CUBE_DATA / #_CUBE_ / #_GROUP_ introuvables dans cette database.') +
+            '</p>';
+          return;
+        }
+        return Promise.all([
+          state.client.listElements(databaseId, cubeDim.dimension),
+          state.client.listElements(databaseId, groupDim.dimension),
+          state.client.exportCells(databaseId, rightsCube.cube),
+        ]).then(function (triple) {
+          var cubeEls = triple[0];
+          var groups = triple[1];
+          var cellMap = triple[2];
+          // #_GROUP_CUBE_DATA : group, cube → path = groupId,cubeElId
+          renderRightsLevelMatrix(host, {
+            rows: groups,
+            cols: cubeEls,
+            cellMap: cellMap,
+            canWrite: canWrite,
+            allowEmpty: true,
+            rowHead: t('Groupe'),
+            pathFn: function (group, cubeEl) {
+              return group.element + ',' + cubeEl.element;
+            },
+            onChange: function (path, val) {
+              return state.client.replaceCell(databaseId, rightsCube.cube, path, val).then(function () {
+                toast(
+                  val ? t('Droit cube « {val} ».', { val: val }) : t('Droit cube remis au défaut.'),
+                  'ok'
+                );
+              });
+            },
+          });
+        });
+      })
+      .catch(function (e) {
+        host.innerHTML = '<p class="error">' + escapeHtml(e.message || String(e)) + '</p>';
+      });
+  }
+
+  /**
+   * Droits groupe × élément de dimension — cube #_GROUP_DIMENSION_DATA_<Dim>.
+   * (C’est le modèle Palo pour les « droits sur une dimension ».)
+   */
+  function renderAdminAccessDimensions(panel, sys) {
+    if (!roleCan('rights', 'R')) {
+      panel.innerHTML = '<p class="error">' + t('Droit insuffisant pour lire les droits.') + '</p>';
+      return Promise.resolve();
+    }
+    var canWrite = roleCan('rights', 'W');
+    var dbs = (state.databases || []).filter(isNormalDatabase);
+    if (!dbs.length) {
+      panel.innerHTML =
+        headerHtml(t('Accès dimensions')) +
+        '<div class="panel"><p class="muted">' + t('Aucune database.') + '</p></div>';
+      return Promise.resolve();
+    }
+    if (!state.accessDimDbId || !dbs.some(function (d) {
+      return String(d.database) === String(state.accessDimDbId);
+    })) {
+      state.accessDimDbId = dbs[0].database;
+      state.accessDimId = null;
+    }
+
+    panel.innerHTML =
+      headerHtml(t('Groupes → dimensions')) +
+      '<div class="panel">' +
+      introHtml(
+        t('Choisissez une base et une dimension, puis indiquez ce que chaque groupe peut faire sur ses éléments. Le tiret laisse le défaut.')
+      ) +
+      '<label>' + t('Database') + '<select id="access-dim-db"></select></label>' +
+      '<label>' + t('Dimension') + '<select id="access-dim-dim"></select></label>' +
+      '<div id="access-dim-matrix" class="muted">' + t('Chargement…') + '</div></div>';
+
+    var dbSel = $('access-dim-db');
+    dbs.forEach(function (db) {
+      var o = document.createElement('option');
+      o.value = db.database;
+      o.textContent = db.name_database;
+      if (String(db.database) === String(state.accessDimDbId)) o.selected = true;
+      dbSel.appendChild(o);
+    });
+
+    function refreshDimSelectThenMatrix() {
+      return populateAccessDimSelect($('access-dim-dim'), state.accessDimDbId).then(function () {
+        return loadAccessDimMatrix(
+          $('access-dim-matrix'),
+          state.accessDimDbId,
+          state.accessDimId,
+          canWrite
+        );
+      });
+    }
+
+    dbSel.onchange = function () {
+      state.accessDimDbId = dbSel.value;
+      state.accessDimId = null;
+      refreshDimSelectThenMatrix();
+    };
+    $('access-dim-dim').onchange = function () {
+      state.accessDimId = $('access-dim-dim').value || null;
+      loadAccessDimMatrix($('access-dim-matrix'), state.accessDimDbId, state.accessDimId, canWrite);
+    };
+
+    return refreshDimSelectThenMatrix();
+  }
+
+  function populateAccessDimSelect(sel, databaseId) {
+    sel.innerHTML = '';
+    var db = findDb(databaseId);
+    var dims = ((db && db._dimensions) || []).slice();
+    if (!dims.length) {
+      var o = document.createElement('option');
+      o.value = '';
+      o.textContent = t('(aucune dimension)');
+      sel.appendChild(o);
+      state.accessDimId = null;
+      return Promise.resolve();
+    }
+    if (!state.accessDimId || !dims.some(function (d) {
+      return String(d.dimension) === String(state.accessDimId);
+    })) {
+      state.accessDimId = dims[0].dimension;
+    }
+    dims.forEach(function (d) {
+      var o = document.createElement('option');
+      o.value = d.dimension;
+      o.textContent = d.name_dimension;
+      if (String(d.dimension) === String(state.accessDimId)) o.selected = true;
+      sel.appendChild(o);
+    });
+    return Promise.resolve();
+  }
+
+  function loadAccessDimMatrix(host, databaseId, dimensionId, canWrite) {
+    if (!host) return Promise.resolve();
+    host.className = 'muted';
+    host.textContent = t('Chargement…');
+    if (!dimensionId) {
+      host.innerHTML = '<p class="muted">' + t('Choisissez une dimension.') + '</p>';
+      return Promise.resolve();
+    }
+
+    var db = findDb(databaseId);
+    var dimMeta = ((db && db._dimensions) || []).find(function (d) {
+      return String(d.dimension) === String(dimensionId);
+    });
+    var dimName = dimMeta ? dimMeta.name_dimension : null;
+    if (!dimName) {
+      host.innerHTML = '<p class="error">' + t('Dimension introuvable.') + '</p>';
+      return Promise.resolve();
+    }
+
+    var rightsCubeName = '#_GROUP_DIMENSION_DATA_' + dimName;
+    var sysOpts = {
+      show_normal: '1',
+      show_system: '1',
+      show_attribute: '0',
+      show_info: '0',
+    };
+
+    return Promise.all([
+      state.client.listCubes(databaseId, sysOpts),
+      state.client.listDimensions(databaseId, sysOpts),
+      state.client.listElements(databaseId, dimensionId),
+    ])
+      .then(function (triple) {
+        var cubes = triple[0];
+        var dims = triple[1];
+        var elements = triple[2];
+        var rightsCube = cubes.find(function (c) {
+          return c.name_cube === rightsCubeName;
+        });
+        var groupDim = dims.find(function (d) {
+          return d.name_dimension === '#_GROUP_';
+        });
+        if (!rightsCube || !groupDim) {
+          host.innerHTML =
+            '<p class="error">' +
+            t('Cube <code>{name}</code> ou dimension <code>#_GROUP_</code> introuvable.', {
+              name: escapeHtml(rightsCubeName),
+            }) +
+            '</p>';
+          return;
+        }
+        return Promise.all([
+          state.client.listElements(databaseId, groupDim.dimension),
+          state.client.exportCells(databaseId, rightsCube.cube),
+        ]).then(function (pair) {
+          var groups = pair[0];
+          var cellMap = pair[1];
+          // #_GROUP_DIMENSION_DATA_<Dim> : group, element → path = groupId,elementId
+          renderRightsLevelMatrix(host, {
+            rows: groups,
+            cols: elements,
+            cellMap: cellMap,
+            canWrite: canWrite,
+            allowEmpty: true,
+            rowHead: t('Groupe'),
+            pathFn: function (group, el) {
+              return group.element + ',' + el.element;
+            },
+            onChange: function (path, val) {
+              return state.client.replaceCell(databaseId, rightsCube.cube, path, val).then(function () {
+                toast(
+                  val
+                    ? t('Droit élément « {val} ».', { val: val })
+                    : t('Droit élément remis au défaut.'),
+                  'ok'
+                );
+              });
+            },
+          });
+        });
+      })
+      .catch(function (e) {
+        host.innerHTML = '<p class="error">' + escapeHtml(e.message || String(e)) + '</p>';
+      });
   }
 
   function findDb(id) {
@@ -1910,10 +2449,10 @@
   /* ---------- Flows ---------- */
 
   function createDimensionFlow(sel) {
-    return promptName('Nouvelle dimension', 'Nom de la dimension', '').then(function (name) {
+    return promptName(t('Nouvelle dimension'), t('Nom de la dimension'), '').then(function (name) {
       if (!name) return;
       return state.client.createDimension(sel.databaseId, name).then(function (created) {
-        toast('Dimension créée.', 'ok');
+        toast(t('Dimension créée.'), 'ok');
         setOpen(treeKey(['db', sel.databaseId]), true);
         setOpen(treeKey(['db', sel.databaseId, 'dimensions']), true);
         return refreshAll({
@@ -1929,7 +2468,7 @@
 
   function createElementFlow(sel) {
     return openModal(
-      'Nouvel élément',
+      t('Nouvel élément'),
       '<label>Nom<input id="el-name" type="text" /></label>' +
         '<label>Type<select id="el-type">' +
         '<option value="1">Numérique (mesure)</option>' +
@@ -1938,13 +2477,13 @@
         '</select></label>',
       function () {
         var name = ($('el-name').value || '').trim();
-        if (!name) throw new Error('Nom requis.');
+        if (!name) throw new Error(t('Nom requis.'));
         return { name: name, type: parseInt($('el-type').value, 10) };
       }
     ).then(function (data) {
       if (!data) return;
       return state.client.createElement(sel.databaseId, sel.dimensionId, data.name, data.type).then(function () {
-        toast('Élément créé.', 'ok');
+        toast(t('Élément créé.'), 'ok');
         return renderDetail();
       });
     }).catch(showErr);
@@ -2019,17 +2558,27 @@
       });
 
       var p = openModal(
-        'Consolidation — ' + parentName,
-        '<p class="cons-parent-line muted">Parent : <strong id="cons-parent-name"></strong></p>' +
+        t('Consolidation — {name}', { name: parentName }),
+        '<p class="cons-parent-line muted">' +
+          t('Parent :') +
+          ' <strong id="cons-parent-name"></strong></p>' +
           '<div class="cons-add-row">' +
-          '<label>Ajouter un enfant<select id="cons-pick"></select></label>' +
-          '<button type="button" class="btn btn-small btn-primary" id="cons-add">Ajouter</button>' +
+          '<label>' +
+          t('Ajouter un enfant') +
+          '<select id="cons-pick"></select></label>' +
+          '<button type="button" class="btn btn-small btn-primary" id="cons-add">' +
+          t('Ajouter') +
+          '</button>' +
           '</div>' +
-          '<p class="muted" style="margin:0.35rem 0 0">Enfants (poids modifiables) :</p>' +
+          '<p class="muted" style="margin:0.35rem 0 0">' +
+          t('Enfants (poids modifiables) :') +
+          '</p>' +
           '<ul class="cons-children-list" id="cons-list"></ul>' +
-          '<p id="cons-empty" class="muted">Aucun enfant — ajoutez-en via le menu.</p>',
+          '<p id="cons-empty" class="muted">' +
+          t('Aucun enfant — ajoutez-en via le menu.') +
+          '</p>',
         function () {
-          if (!childEntries.length) throw new Error('Ajoutez au moins un enfant.');
+          if (!childEntries.length) throw new Error(t('Ajoutez au moins un enfant.'));
           var children = [];
           var weights = [];
           var bad = false;
@@ -2039,7 +2588,7 @@
             if (w === '' || isNaN(Number(w))) bad = true;
             weights.push(w === '' ? '1' : w);
           });
-          if (bad) throw new Error('Chaque poids doit être un nombre.');
+          if (bad) throw new Error(t('Chaque poids doit être un nombre.'));
           return { parent: parentId, children: children, weights: weights };
         },
         { wide: true }
@@ -2062,7 +2611,7 @@
           pick.innerHTML = '';
           var placeholder = document.createElement('option');
           placeholder.value = '';
-          placeholder.textContent = '— choisir un élément —';
+          placeholder.textContent = t('— choisir un élément —');
           pick.appendChild(placeholder);
           rows.forEach(function (r) {
             if (forbidden[String(r.element)]) return;
@@ -2082,8 +2631,10 @@
             li.className = 'cons-child-row';
             li.innerHTML =
               '<span class="cons-child-name"></span>' +
-              '<input type="number" step="any" class="cons-weight" title="Poids" />' +
-              iconBtn({ dataAct: 'rm', icon: 'del', title: 'Retirer', extraClass: 'btn-danger', allowed: true });
+              '<input type="number" step="any" class="cons-weight" title="' +
+              escapeAttr(t('Poids')) +
+              '" />' +
+              iconBtn({ dataAct: 'rm', icon: 'del', title: t('Retirer'), extraClass: 'btn-danger', allowed: true });
             li.querySelector('.cons-child-name').textContent = c.name;
             var wInp = li.querySelector('.cons-weight');
             wInp.value = c.weight;
@@ -2102,15 +2653,15 @@
         $('cons-add').onclick = function () {
           var id = pick.value;
           if (!id) {
-            toast('Choisissez un enfant à ajouter.', 'err');
+            toast(t('Choisissez un enfant à ajouter.'), 'err');
             return;
           }
           if (forbidden[String(id)]) {
-            toast('Consolidation cyclique interdite.', 'err');
+            toast(t('Consolidation cyclique interdite.'), 'err');
             return;
           }
           if (inList(id)) {
-            toast('Cet enfant est déjà dans la liste.', 'err');
+            toast(t('Cet enfant est déjà dans la liste.'), 'err');
             return;
           }
           var el = byId[id];
@@ -2139,7 +2690,7 @@
             data.weights.join(',')
           )
           .then(function () {
-            toast('Consolidation enregistrée.', 'ok');
+            toast(t('Consolidation enregistrée.'), 'ok');
             return renderDetail();
           });
       });
@@ -2150,7 +2701,7 @@
     var db = findDb(sel.databaseId);
     var dims = (db && db._dimensions) || [];
     if (dims.length < 2) {
-      toast('Il faut au moins 2 dimensions dans la base avant de créer un cube.', 'err');
+      toast(t('Il faut au moins 2 dimensions dans la base avant de créer un cube.'), 'err');
       return Promise.resolve();
     }
     var leftOpts = dims
@@ -2160,10 +2711,14 @@
       .join('');
 
     var p = openModal(
-      'Nouveau cube',
-      '<label>Nom<input id="cube-name" type="text" /></label>' +
+      t('Nouveau cube'),
+      '<label>' +
+        t('Nom') +
+        '<input id="cube-name" type="text" /></label>' +
         '<div class="shuttle">' +
-        '<div class="shuttle-col"><span class="muted">Dimensions disponibles</span>' +
+        '<div class="shuttle-col"><span class="muted">' +
+        t('Dimensions disponibles') +
+        '</span>' +
         '<select id="cube-left" multiple size="10">' +
         leftOpts +
         '</select></div>' +
@@ -2171,7 +2726,9 @@
         '<button type="button" class="btn btn-small" id="sh-right">→</button>' +
         '<button type="button" class="btn btn-small" id="sh-left">←</button>' +
         '</div>' +
-        '<div class="shuttle-col"><span class="muted">Dimensions du cube (ordre = axes)</span>' +
+        '<div class="shuttle-col"><span class="muted">' +
+        t('Dimensions du cube (ordre = axes)') +
+        '</span>' +
         '<select id="cube-right" multiple size="10"></select></div>' +
         '<div class="shuttle-order">' +
         '<button type="button" class="btn btn-small" id="sh-up">↑</button>' +
@@ -2179,9 +2736,9 @@
         '</div></div>',
       function () {
         var name = ($('cube-name').value || '').trim();
-        if (!name) throw new Error('Nom requis.');
+        if (!name) throw new Error(t('Nom requis.'));
         var right = $('cube-right');
-        if (right.options.length < 2) throw new Error('Sélectionnez au moins 2 dimensions.');
+        if (right.options.length < 2) throw new Error(t('Sélectionnez au moins 2 dimensions.'));
         var ids = Array.prototype.map.call(right.options, function (o) {
           return o.value;
         });
@@ -2198,7 +2755,7 @@
       .then(function (data) {
         if (!data) return;
         return state.client.createCube(sel.databaseId, data.name, data.dimensionIds.join(',')).then(function (created) {
-          toast('Cube créé.', 'ok');
+          toast(t('Cube créé.'), 'ok');
           setOpen(treeKey(['db', sel.databaseId]), true);
           setOpen(treeKey(['db', sel.databaseId, 'cubes']), true);
           return refreshAll({
@@ -2321,7 +2878,7 @@
           var label = applySessionInfo(info, user);
           $('session-label').textContent = label + ' @ ' + serverBaseUrl();
           closeReauthModal();
-          toast('Reconnecté.', 'ok');
+          toast(t('Reconnecté.'), 'ok');
           return refreshAll(state.selection);
         })
         .catch(function (err) {
@@ -2345,11 +2902,20 @@
         }
         // Si la sélection admin n’est plus autorisée, revenir à la racine admin ou vide
         if (state.selection && state.selection.type === 'admin-folder') {
-          var folderRight = { users: 'user', groups: 'group', roles: 'rights', rights: 'rights' }[
-            state.selection.folder
-          ];
+          var folderRight = {
+            users: 'user',
+            'user-groups': 'user',
+            groups: 'group',
+            'group-roles': 'group',
+            roles: 'rights',
+            rights: 'rights',
+            'role-rights': 'rights',
+            'access-db': 'rights',
+            'access-cube': 'rights',
+            'access-dim': 'rights',
+          }[state.selection.folder];
           if (state.selection.folder === 'rights') {
-            state.selection = { type: 'admin-folder', folder: 'roles' };
+            state.selection = { type: 'admin-folder', folder: 'role-rights' };
           } else if (folderRight && !roleCan(folderRight, 'R')) {
             state.selection = canSeeAdmin() ? { type: 'admin-root' } : null;
           }
@@ -2384,7 +2950,7 @@
   }
 
   function bindUi() {
-    $('login-origin-label').textContent = 'Serveur : ' + serverBaseUrl();
+    $('login-origin-label').textContent = t('Serveur\u00a0: ') + serverBaseUrl();
     bindReauth();
 
     $('login-form').addEventListener('submit', function (e) {
@@ -2428,13 +2994,13 @@
 
     $('btn-new-database').onclick = function () {
       if (!roleCan('database', 'W')) {
-        toast('Droit insuffisant pour créer une base.', 'err');
+        toast(t('Droit insuffisant pour créer une base.'), 'err');
         return;
       }
-      promptName('Nouvelle base', 'Nom de la base', '').then(function (name) {
+      promptName(t('Nouvelle base'), t('Nom de la base'), '').then(function (name) {
         if (!name) return;
         return state.client.createDatabase(name).then(function (created) {
-          toast('Base créée.', 'ok');
+          toast(t('Base créée.'), 'ok');
           setOpen(treeKey(['db', created.database]), true);
           return refreshAll({
             type: 'database',
@@ -2460,5 +3026,38 @@
     });
   }
 
+  function syncLangSelects() {
+    var code = (globalThis.PaloI18n && PaloI18n.getLocale()) || 'fr';
+    ['login-lang', 'app-lang'].forEach(function (id) {
+      var el = $(id);
+      if (el) el.value = code;
+    });
+  }
+
+  function onLocaleChange(code) {
+    if (globalThis.PaloI18n) PaloI18n.setLocale(code);
+    syncLangSelects();
+    var origin = $('login-origin-label');
+    if (origin && !$('login-view').classList.contains('hidden')) {
+      origin.textContent = t('Serveur\u00a0: ') + serverBaseUrl();
+    }
+    if (state.client && !$('app').classList.contains('hidden')) {
+      refreshAll(state.selection);
+    }
+  }
+
+  function bindLangSelectors() {
+    syncLangSelects();
+    if (globalThis.PaloI18n) PaloI18n.applyDom();
+    ['login-lang', 'app-lang'].forEach(function (id) {
+      var el = $(id);
+      if (!el) return;
+      el.onchange = function () {
+        onLocaleChange(el.value);
+      };
+    });
+  }
+
+  bindLangSelectors();
   bindUi();
 })();

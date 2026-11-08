@@ -204,6 +204,64 @@ body {
   flex-shrink: 0;
 }
 
+.topbar .topbar-api {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border-radius: 6px;
+  color: #fff;
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.topbar .topbar-api:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.topbar .topbar-api svg {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.lang-select {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text, #1a1a1a);
+}
+
+.lang-select--topbar {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.35);
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.lang-select--topbar option {
+  color: #1a1a1a;
+}
+
+.login-lang {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.5rem;
+}
+
+.login-lang label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
 .workspace {
   flex: 1;
   min-height: 0;
@@ -456,6 +514,12 @@ body {
 .meta-list {
   margin: 0;
   padding-left: 1.1rem;
+}
+
+.panel-intro {
+  margin: 0 0 0.75rem;
+  font-size: 0.92rem;
+  line-height: 1.4;
 }
 
 .shuttle {
@@ -785,11 +849,11 @@ label.switch {
 .rights-matrix select.right-level {
   font: inherit;
   font-size: 0.78rem;
-  padding: 0.15rem 0.2rem;
+  padding: 0.15rem 0.25rem;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: #fff;
-  min-width: 3.2rem;
+  min-width: 7.5rem;
   cursor: pointer;
 }
 
@@ -802,6 +866,13 @@ label.switch {
   margin: 0 0 0.5rem;
   font-size: 0.95rem;
   color: var(--muted);
+}
+
+.admin-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
 }
 
 .admin-split {
@@ -829,10 +900,17 @@ label.switch {
   margin: 0;
 }
 
+/* Même boîte que .modal-body select (padding 0.5rem, font inherit) — pas .btn-small */
+.cons-add-row select,
 .cons-add-row #cons-add {
-  height: calc(1.2em + 1rem + 2px); /* même hauteur que .modal-body select (padding 0.5rem × 2 + border) */
-  padding: 0 0.9rem;
+  height: 2.5rem;
   box-sizing: border-box;
+  font-size: inherit;
+  line-height: 1.2;
+}
+
+.cons-add-row #cons-add {
+  padding: 0 0.9rem;
   align-self: end;
 }
 

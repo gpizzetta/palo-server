@@ -10,12 +10,14 @@ rsync -a --delete \
   --exclude 'deploy-local.sh' \
   "$ROOT"/ "$DEST"/
 
-# Secours si le binaire Palo n’a pas encore le handler /explore/js/rule-editor.js :
-# préfixer rule-editor.js dans app.js (app.js est toujours enregistré).
-# PaloRuleEditor défini 2× si le handler existe déjà + script séparé : inoffensif.
-if [[ -f "$ROOT/js/rule-editor.js" && -f "$DEST/js/app.js" ]]; then
-  cat "$ROOT/js/rule-editor.js" "$ROOT/js/app.js" > "$DEST/js/app.js"
-  echo "Note: rule-editor.js préfixé dans app.js (compat handler manquant)."
+# Préfixer i18n + rule-editor dans app.js (handlers séparés optionnels après rebuild).
+if [[ -f "$ROOT/js/app.js" ]]; then
+  parts=()
+  [[ -f "$ROOT/js/i18n.js" ]] && parts+=("$ROOT/js/i18n.js")
+  [[ -f "$ROOT/js/rule-editor.js" ]] && parts+=("$ROOT/js/rule-editor.js")
+  parts+=("$ROOT/js/app.js")
+  cat "${parts[@]}" > "$DEST/js/app.js"
+  echo "Note: préfixe ${#parts[@]} fichier(s) → js/app.js"
 fi
 
-echo "OK. Ouvrir http://127.0.0.1:7777/explore (pas besoin de redémarrer Palo pour les fichiers statiques)."
+echo "OK. UI à http://127.0.0.1:7777/ — rebuild+restart Palo si handlers HTTP ont changé."

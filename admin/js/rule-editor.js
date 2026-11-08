@@ -1,30 +1,37 @@
 /**
  * Éditeur de règles Palo — textarea + 2 combobox d’insertion.
- * Références : toutes databases/cubes ; cube courant → ['Dim':'Élément'],
- * autre cube → PALO.DATA("db","cube",…).
+ * Éléments cube courant → 'Dim':'Élément' (sans []) ; zone via opérateur [ ].
+ * Autre cube → PALO.DATA("db","cube",…).
  */
 (function (global) {
-  var OPERATORS = [
-    { label: '=  égalité', insert: ' = ' },
-    { label: '+  addition', insert: ' + ' },
-    { label: '−  soustraction', insert: ' - ' },
-    { label: '×  multiplication', insert: ' * ' },
-    { label: '÷  division', insert: ' / ' },
-    { label: '( )  parenthèses', insert: '()', cursor: -1 },
-    { label: '<  inférieur', insert: ' < ' },
-    { label: '>  supérieur', insert: ' > ' },
-    { label: '<=  inférieur ou égal', insert: ' <= ' },
-    { label: '>=  supérieur ou égal', insert: ' >= ' },
-    { label: '<>  différent', insert: ' <> ' },
-    { label: 'IF(…)', insert: 'IF(, )', cursor: -3 },
-    { label: 'STET()', insert: 'STET()' },
-    { label: 'CONTINUE()', insert: 'CONTINUE()' },
-    { label: 'PALO.DATA(…)', insert: 'PALO.DATA(, )', cursor: -3 },
-    { label: 'ABS(…)', insert: 'ABS()', cursor: -1 },
-    { label: 'MIN(…)', insert: 'MIN(, )', cursor: -3 },
-    { label: 'MAX(…)', insert: 'MAX(, )', cursor: -3 },
-    { label: 'ROUND(…)', insert: 'ROUND(, )', cursor: -3 },
-  ];
+  function tr(key) {
+    return typeof global.t === 'function' ? global.t(key) : key;
+  }
+
+  function operators() {
+    return [
+      { label: tr('[ ]  zone'), insert: '[]', cursor: -1 },
+      { label: tr('=  égalité'), insert: ' = ' },
+      { label: tr('+  addition'), insert: ' + ' },
+      { label: tr('−  soustraction'), insert: ' - ' },
+      { label: tr('×  multiplication'), insert: ' * ' },
+      { label: tr('÷  division'), insert: ' / ' },
+      { label: tr('( )  parenthèses'), insert: '()', cursor: -1 },
+      { label: tr('<  inférieur'), insert: ' < ' },
+      { label: tr('>  supérieur'), insert: ' > ' },
+      { label: tr('<=  inférieur ou égal'), insert: ' <= ' },
+      { label: tr('>=  supérieur ou égal'), insert: ' >= ' },
+      { label: tr('<>  différent'), insert: ' <> ' },
+      { label: 'IF(…)', insert: 'IF(, )', cursor: -3 },
+      { label: 'STET()', insert: 'STET()' },
+      { label: 'CONTINUE()', insert: 'CONTINUE()' },
+      { label: 'PALO.DATA(…)', insert: 'PALO.DATA(, )', cursor: -3 },
+      { label: 'ABS(…)', insert: 'ABS()', cursor: -1 },
+      { label: 'MIN(…)', insert: 'MIN(, )', cursor: -3 },
+      { label: 'MAX(…)', insert: 'MAX(, )', cursor: -3 },
+      { label: 'ROUND(…)', insert: 'ROUND(, )', cursor: -3 },
+    ];
+  }
 
   function quotePalo(name) {
     return String(name || '').replace(/'/g, "''");
@@ -117,11 +124,17 @@
     var pick = document.createElement('div');
     pick.className = 'rule-pick';
     pick.innerHTML =
-      '<label>Référence (database : cube : dimension : élément)' +
-      '<select id="rule-ref"><option value="">— choisir —</option></select>' +
+      '<label>' +
+      tr('Référence (database : cube : dimension : élément)') +
+      '<select id="rule-ref"><option value="">' +
+      tr('— choisir —') +
+      '</option></select>' +
       '</label>' +
-      '<label>Opérateur / fonction' +
-      '<select id="rule-op"><option value="">— choisir —</option></select>' +
+      '<label>' +
+      tr('Opérateur / fonction') +
+      '<select id="rule-op"><option value="">' +
+      tr('— choisir —') +
+      '</option></select>' +
       '</label>';
     root.insertBefore(pick, ta);
 
@@ -136,8 +149,9 @@
 
     var hint = document.createElement('p');
     hint.className = 'muted rule-hint';
-    hint.textContent =
-      'Cube courant → [\'Dim\':\'Élément\']. Autre cube → PALO.DATA("db","cube",…). [] = tout le cube courant.';
+    hint.textContent = tr(
+      "Insérer [ ] puis les éléments 'Dim':'Élément' (sans crochets). Plusieurs éléments : séparer par des virgules. Autre cube → PALO.DATA."
+    );
     root.appendChild(hint);
   };
 
@@ -185,20 +199,16 @@
         var sameCube = dbName === currentDb && cube.name === currentCube;
         // Un seul libellé database/cube pour tout le sous-menu
         var g = document.createElement('optgroup');
-        g.label = pathLabel([dbName, cube.name]) + (sameCube ? ' (courant)' : '');
+        g.label = pathLabel([dbName, cube.name]) + (sameCube ? ' ' + tr('(courant)') : '');
         sel.appendChild(g);
-
-        if (sameCube) {
-          addOpt(g, '(tout le cube)', '[]', 0);
-        }
 
         (cube.dims || []).forEach(function (d) {
           addDimHeader(g, d.name || '(dimension)');
           (d.elements || []).forEach(function (el) {
+            // Sans [] : à placer dans une zone [ ] (opérateur) ou à compléter à la main
             var insert = sameCube
-              ? "['" + quotePalo(d.name) + "':'" + quotePalo(el.name_element) + "']"
+              ? "'" + quotePalo(d.name) + "':'" + quotePalo(el.name_element) + "'"
               : buildPaloDataInsert(dbName, cube, d.name, el.name_element);
-            // Seulement le nom d’élément (db/cube déjà dans l’optgroup)
             addOpt(g, IND + IND + (el.name_element || ''), insert, 0);
           });
         });
@@ -211,7 +221,7 @@
   PaloRuleEditor.prototype._populateOpCombo = function () {
     var sel = this._opSel;
     var items = {};
-    OPERATORS.forEach(function (op, i) {
+    operators().forEach(function (op, i) {
       var key = 'o' + i;
       var o = document.createElement('option');
       o.value = key;
