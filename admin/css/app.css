@@ -340,6 +340,10 @@ body {
   font-size: 0.92rem;
 }
 
+.tree-label.is-consolidated {
+  font-weight: 700;
+}
+
 .detail {
   min-width: 0;
   padding: 1rem 1.25rem;

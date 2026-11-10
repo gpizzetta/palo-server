@@ -15,26 +15,50 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
 STAGING_DIR="${BUILD_DIR}/pkg-root"
-VERSION="5.1.4-17"
+VERSION="5.1.4-18"
 PKG_NAME="palo-server_${VERSION}_amd64.deb"
+# SKIP_BUILD=1 : ne pas lancer cmake/make ; réutiliser les binaires déjà présents
+# (ou extraits d’un .deb via BIN_FROM_DEB=/path/to.deb).
+SKIP_BUILD="${SKIP_BUILD:-0}"
+BIN_FROM_DEB="${BIN_FROM_DEB:-}"
 
 echo "Root directory : ${ROOT_DIR}"
 echo "Build directory: ${BUILD_DIR}"
 echo "Staging dir   : ${STAGING_DIR}"
 
-mkdir -p "${BUILD_DIR}"
+mkdir -p "${BUILD_DIR}/usr/bin" "${BUILD_DIR}/usr/lib"
 
-echo "Configuring CMake (Release, paloexport inclus dans le paquet)..."
-cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -DPROJECT_BUILD_TYPE=Release -DENABLE_PALOEXPORT=ON
+if [ -n "${BIN_FROM_DEB}" ]; then
+  echo "Extracting binaries from ${BIN_FROM_DEB}..."
+  TMP_EXTRACT="$(mktemp -d)"
+  dpkg-deb -x "${BIN_FROM_DEB}" "${TMP_EXTRACT}"
+  cp -a "${TMP_EXTRACT}/usr/bin/palo" "${BUILD_DIR}/usr/bin/palo"
+  [ -x "${TMP_EXTRACT}/usr/bin/paloexport" ] && cp -a "${TMP_EXTRACT}/usr/bin/paloexport" "${BUILD_DIR}/usr/bin/paloexport"
+  [ -f "${TMP_EXTRACT}/usr/lib/libhttps.palo.so" ] && cp -a "${TMP_EXTRACT}/usr/lib/libhttps.palo.so" "${BUILD_DIR}/usr/lib/libhttps.palo.so"
+  rm -rf "${TMP_EXTRACT}"
+  SKIP_BUILD=1
+fi
+
+if [ "${SKIP_BUILD}" != "1" ]; then
+  echo "Configuring CMake (Release, paloexport inclus dans le paquet)..."
+  cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -DPROJECT_BUILD_TYPE=Release -DENABLE_PALOEXPORT=ON
+
+  if [ ! -x "${BUILD_DIR}/usr/bin/palo" ]; then
+    echo "Building Palo (full)..."
+    cmake --build "${BUILD_DIR}" -- -j"$(nproc)"
+  else
+    echo "Palo binary already present; incremental build."
+  fi
+  # Toujours construire paloexport pour le .deb
+  cmake --build "${BUILD_DIR}" --target paloexport -- -j"$(nproc)"
+else
+  echo "SKIP_BUILD=1 — pas de compilation."
+fi
 
 if [ ! -x "${BUILD_DIR}/usr/bin/palo" ]; then
-  echo "Building Palo (full)..."
-  cmake --build "${BUILD_DIR}" -- -j"$(nproc)"
-else
-  echo "Palo binary already present; incremental build."
+  echo "ERROR: ${BUILD_DIR}/usr/bin/palo manquant. Compilez, ou passez BIN_FROM_DEB=/chemin/vers.deb" >&2
+  exit 1
 fi
-# Toujours construire paloexport pour le .deb
-cmake --build "${BUILD_DIR}" --target paloexport -- -j"$(nproc)"
 
 echo "Preparing staging tree..."
 rm -rf "${STAGING_DIR}"

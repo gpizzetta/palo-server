@@ -1148,10 +1148,13 @@
     var canRen = canBoth('dimension element', node.permission, 'W');
     var canDel = canBoth('dimension element', node.permission, 'D');
     var canCons = canBoth('dimension element', node.permission, 'W');
+    var isConsolidated = Number(node.type) === ELEMENT_CONSOLIDATED;
     row.innerHTML =
       '<span class="badge">' +
       elementTypeLabel(node.type) +
-      '</span><span class="tree-label"></span>' +
+      '</span><span class="tree-label' +
+      (isConsolidated ? ' is-consolidated' : '') +
+      '"></span>' +
       iconBtn({ dataAct: 'cons', icon: 'consolidate', title: t('Consolidation…'), allowed: canCons }) +
       iconBtn({ dataAct: 'rename', icon: 'edit', title: t('Renommer'), allowed: canRen }) +
       iconBtn({ dataAct: 'del', icon: 'del', title: t('Supprimer'), extraClass: 'btn-danger', allowed: canDel });

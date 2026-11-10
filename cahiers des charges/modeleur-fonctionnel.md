@@ -3,7 +3,7 @@
 Référence produit : **PalOOCa** (extension LibreOffice/OpenOffice Calc pour Jedox/Palo), module **Modeller** et dialogues associés  
 Source : [sourceforge.net/p/palooca](https://sourceforge.net/p/palooca/code/HEAD/tree/trunk/AddIn/src/org/palooca/dialogs/) (`Modeller`, `CreateCubeDialog`, etc.)
 
-Ce document décrit **ce que l’utilisateur doit pouvoir faire**, indépendamment de la techno cible (web `/explore`, panneau Excel, autre). Il sert de base pour prioriser MVP et évolutions.
+Ce document décrit **ce que l’utilisateur doit pouvoir faire**, indépendamment de la techno cible (web à `/`, panneau Excel, autre). Il sert de base pour prioriser MVP et évolutions.
 
 ---
 
@@ -30,7 +30,7 @@ Administrer un serveur Palo (bases, dimensions, éléments/mesures, cubes, règl
 
 ### 1.4 Cibles d’implémentation (hors détail technique)
 
-- **Court terme** : enrichir l’UI web déjà servie sous **`/explore`**.
+- **Court terme** : enrichir l’UI web déjà servie à **`/`**.
 - **Moyen terme** : panneau modeleur dans **`palo-excel-addin`** (même comportements fonctionnels).
 - Les deux cibles doivent partager le **même périmètre fonctionnel** décrit ici (écarts explicités en §8).
 
@@ -161,7 +161,7 @@ Toute suppression de base, dimension, cube, élément, user, etc. demande une **
 
 ## 8. Cartographie avec l’existant
 
-| Fonction PalOOCa / CDC | `/explore` (admin JS) aujourd’hui | Excel add-in |
+| Fonction PalOOCa / CDC | UI web `/` (admin JS) aujourd’hui | Excel add-in |
 |------------------------|-----------------------------------|--------------|
 | Connexions multi-serveurs | URL saisie à la connexion (1 serveur) | Panneau connexion (à aligner) |
 | Bases CRUD | Liste + création (pas delete/rename) | À faire |
@@ -172,7 +172,7 @@ Toute suppression de base, dimension, cube, élément, user, etc. demande une **
 | Users / groupes / rôles | Users basique (System) | À faire |
 | View / Subset / Paste | Non | Cible Excel P2 |
 
-Écarts `/explore` à combler en priorité pour coller au P0 : **rename**, **delete base**, **UI création cube type shuttle** (ordre des dims), **gestion connexions enregistrées** (optionnel).
+Écarts UI web à combler en priorité pour coller au P0 : **rename**, **delete base**, **UI création cube type shuttle** (ordre des dims), **gestion connexions enregistrées** (optionnel).
 
 ---
 
@@ -200,7 +200,7 @@ Toute suppression de base, dimension, cube, élément, user, etc. demande une **
 
 - PalOOCa Modeler : `org.palooca.dialogs.Modeller` + `CreateCubeDialog`, `ConsolidationFactorDialog`, `InsertElementDialog`, nœuds `dialogs/nodes/*`
 - Projet : https://sourceforge.net/p/palooca/
-- UI web actuelle : `admin/`, URL `/explore`
+- UI web actuelle : `admin/`, URL `/` (fichiers sous `Api/explore/`)
 - Spec admin historique (plus large / lacunaire) : `cahiers des charges/README.md`
 
 ---
