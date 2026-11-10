@@ -1050,19 +1050,94 @@
     });
   }
 
+  function filterElementForest(forest, query) {
+    var q = String(query || '')
+      .trim()
+      .toLowerCase();
+    if (!q) return forest;
+
+    function filterNode(n) {
+      var selfMatch = String(n.name_element || '')
+        .toLowerCase()
+        .indexOf(q) >= 0;
+      var childSrc = n._children || [];
+      var kids = selfMatch
+        ? childSrc.slice()
+        : childSrc.map(filterNode).filter(Boolean);
+      if (!selfMatch && !kids.length) return null;
+      var copy = Object.assign({}, n);
+      copy._children = kids;
+      return copy;
+    }
+
+    return forest.map(filterNode).filter(Boolean);
+  }
+
+  function countForestNodes(forest) {
+    var n = 0;
+    function walk(nodes) {
+      (nodes || []).forEach(function (node) {
+        n += 1;
+        walk(node._children);
+      });
+    }
+    walk(forest);
+    return n;
+  }
+
   function renderElementTree(host, rows) {
     if (!rows.length) {
       host.innerHTML = '<p class="muted">' + t('Aucun élément pour l’instant. Ajoutez-en avec le bouton +.') + '</p>';
       return;
     }
     var forest = buildElementForest(rows);
-    var ul = document.createElement('ul');
-    ul.className = 'element-tree';
-    forest.forEach(function (n) {
-      ul.appendChild(renderElementNode(n));
-    });
+    var total = rows.length;
     host.innerHTML = '';
-    host.appendChild(ul);
+    host.classList.remove('muted');
+
+    var toolbar = document.createElement('div');
+    toolbar.className = 'el-filter-bar';
+    toolbar.innerHTML =
+      '<input type="search" id="el-filter" class="el-filter" placeholder="' +
+      escapeAttr(t('Filtrer les éléments…')) +
+      '" autocomplete="off" />' +
+      '<span class="el-filter-count muted" id="el-filter-count"></span>';
+    host.appendChild(toolbar);
+
+    var listHost = document.createElement('div');
+    listHost.className = 'el-tree-host';
+    host.appendChild(listHost);
+
+    function paint(query) {
+      var filtered = filterElementForest(forest, query);
+      var shown = countForestNodes(filtered);
+      var countEl = $('el-filter-count');
+      if (countEl) {
+        countEl.textContent = query
+          ? t('{shown} sur {total}', { shown: shown, total: total })
+          : t('{total} éléments', { total: total });
+      }
+      listHost.innerHTML = '';
+      if (!filtered.length) {
+        listHost.innerHTML =
+          '<p class="muted">' + t('Aucun élément ne correspond.') + '</p>';
+        return;
+      }
+      var ul = document.createElement('ul');
+      ul.className = 'element-tree';
+      filtered.forEach(function (n) {
+        ul.appendChild(renderElementNode(n));
+      });
+      listHost.appendChild(ul);
+    }
+
+    var inp = $('el-filter');
+    if (inp) {
+      inp.addEventListener('input', function () {
+        paint(inp.value);
+      });
+    }
+    paint('');
   }
 
   function renderElementNode(node) {

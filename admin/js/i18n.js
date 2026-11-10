@@ -308,6 +308,10 @@
       'Choisissez une base et une dimension, puis indiquez ce que chaque groupe peut faire sur ses éléments. Le tiret laisse le défaut.': 'Pick a database and a dimension, then set what each group can do on its elements. A dash keeps the default.',
       'Ces droits ne sont pas accessibles avec votre compte (lecture réservée aux rôles ayant le droit « rights »).': 'These rights are not available with your account (read requires the “rights” role privilege).',
       'Ces droits sont réservés aux membres du groupe admin.': 'These rights are reserved for members of the admin group.',
+      'Filtrer les éléments…': 'Filter elements…',
+      'Aucun élément ne correspond.': 'No matching elements.',
+      '{shown} sur {total}': '{shown} of {total}',
+      '{total} éléments': '{total} elements',
     },
     de: {
       'Modeleur Palo': 'Palo Modellierer',
@@ -584,6 +588,10 @@
       'Choisissez une base et une dimension, puis indiquez ce que chaque groupe peut faire sur ses éléments. Le tiret laisse le défaut.': 'Wählen Sie Datenbank und Dimension und legen Sie fest, was jede Gruppe auf den Elementen darf. Der Strich behält den Standard.',
       'Ces droits ne sont pas accessibles avec votre compte (lecture réservée aux rôles ayant le droit « rights »).': 'Diese Rechte sind mit Ihrem Konto nicht verfügbar (Lesen erfordert das Rollenrecht „rights“).',
       'Ces droits sont réservés aux membres du groupe admin.': 'Diese Rechte sind Mitgliedern der Admin-Gruppe vorbehalten.',
+      'Filtrer les éléments…': 'Elemente filtern…',
+      'Aucun élément ne correspond.': 'Keine passenden Elemente.',
+      '{shown} sur {total}': '{shown} von {total}',
+      '{total} éléments': '{total} Elemente',
     },
   };
 

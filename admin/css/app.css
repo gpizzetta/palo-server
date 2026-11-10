@@ -400,6 +400,40 @@ body {
   margin-right: auto;
 }
 
+.el-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin: 0 0 0.65rem;
+}
+
+.el-filter {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.65rem;
+  font: inherit;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.el-filter:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.el-filter-count {
+  flex-shrink: 0;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.el-tree-host {
+  max-height: min(28rem, 55vh);
+  overflow: auto;
+}
+
 .element-tree {
   list-style: none;
   margin: 0;
