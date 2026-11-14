@@ -204,24 +204,45 @@
     return window.confirm(message);
   }
 
+  function showNativeDialog(dlg) {
+    if (!dlg) return;
+    if (typeof dlg.showModal === 'function') {
+      if (!dlg.open) dlg.showModal();
+    } else {
+      dlg.setAttribute('open', '');
+    }
+  }
+
+  function hideNativeDialog(dlg) {
+    if (!dlg) return;
+    if (typeof dlg.close === 'function' && dlg.open) {
+      dlg.close();
+    } else {
+      dlg.removeAttribute('open');
+    }
+  }
+
   function openModal(title, bodyHtml, validateFn, opts) {
+    var dlg = $('modal');
     $('modal-title').textContent = title;
     $('modal-body').innerHTML = bodyHtml;
-    var card = $('modal').querySelector('.modal-card');
-    if (card) card.classList.toggle('modal-card--wide', !!(opts && opts.wide));
-    $('modal').classList.remove('hidden');
-    $('modal').setAttribute('aria-hidden', 'false');
-    var first = $('modal-body').querySelector('input, select, textarea');
-    if (first) setTimeout(function () {
-      first.focus();
-      if (first.select) first.select();
-    }, 30);
+    dlg.classList.toggle('modal-dialog--wide', !!(opts && opts.wide));
 
     return new Promise(function (resolve) {
+      var settled = false;
+      function finish(value) {
+        if (settled) return;
+        settled = true;
+        state.modalResolve = null;
+        hideNativeDialog(dlg);
+        $('modal-body').innerHTML = '';
+        dlg.classList.remove('modal-dialog--wide');
+        resolve(value);
+      }
+
       state.modalResolve = function (ok) {
         if (!ok) {
-          closeModal();
-          resolve(null);
+          finish(null);
           return;
         }
         var result;
@@ -232,29 +253,40 @@
           return;
         }
         if (result && typeof result.then === 'function') {
-          result.then(function (r) {
-            if (r == null) return;
-            closeModal();
-            resolve(r);
-          }).catch(function (e) {
-            toast((e && e.message) || String(e), 'err');
-          });
+          result
+            .then(function (r) {
+              if (r == null) return;
+              finish(r);
+            })
+            .catch(function (e) {
+              toast((e && e.message) || String(e), 'err');
+            });
           return;
         }
         if (result == null) return;
-        closeModal();
-        resolve(result);
+        finish(result);
       };
+
+      showNativeDialog(dlg);
+      var first = $('modal-body').querySelector('input, select, textarea');
+      if (first) {
+        setTimeout(function () {
+          first.focus();
+          if (first.select) first.select();
+        }, 30);
+      }
     });
   }
 
   function closeModal() {
-    $('modal').classList.add('hidden');
-    $('modal').setAttribute('aria-hidden', 'true');
+    if (state.modalResolve) {
+      state.modalResolve(false);
+      return;
+    }
+    var dlg = $('modal');
+    hideNativeDialog(dlg);
     $('modal-body').innerHTML = '';
-    var card = $('modal').querySelector('.modal-card');
-    if (card) card.classList.remove('modal-card--wide');
-    state.modalResolve = null;
+    dlg.classList.remove('modal-dialog--wide');
   }
 
   function promptName(title, label, defaultValue) {
@@ -1703,9 +1735,13 @@
     table.className = 'rights-matrix';
     var thead = document.createElement('thead');
     var hr = document.createElement('tr');
-    hr.innerHTML = '<th class="row-head"></th>';
+    var corner = document.createElement('th');
+    corner.className = 'row-head';
+    corner.scope = 'col';
+    hr.appendChild(corner);
     cols.forEach(function (c) {
       var th = document.createElement('th');
+      th.scope = 'col';
       th.textContent = c.name_element;
       th.title = c.name_element;
       hr.appendChild(th);
@@ -1716,7 +1752,8 @@
     var tbody = document.createElement('tbody');
     rows.forEach(function (r) {
       var tr = document.createElement('tr');
-      var th = document.createElement('td');
+      var th = document.createElement('th');
+      th.scope = 'row';
       th.className = 'row-head';
       th.textContent = r.name_element;
       th.title = r.name_element;
@@ -1779,9 +1816,14 @@
     table.className = 'rights-matrix';
     var thead = document.createElement('thead');
     var hr = document.createElement('tr');
-    hr.innerHTML = '<th class="row-head">' + escapeHtml(rowHead) + '</th>';
+    var corner = document.createElement('th');
+    corner.className = 'row-head';
+    corner.scope = 'col';
+    corner.textContent = rowHead || '';
+    hr.appendChild(corner);
     cols.forEach(function (c) {
       var th = document.createElement('th');
+      th.scope = 'col';
       th.textContent = c.name_element;
       th.title = c.name_element;
       hr.appendChild(th);
@@ -1792,7 +1834,8 @@
     var tbody = document.createElement('tbody');
     objs.forEach(function (obj) {
       var tr = document.createElement('tr');
-      var th = document.createElement('td');
+      var th = document.createElement('th');
+      th.scope = 'row';
       th.className = 'row-head';
       th.textContent = obj.name_element;
       th.title = obj.name_element;
@@ -2937,8 +2980,7 @@
     $('reauth-error').classList.add('hidden');
     $('reauth-user').value = state.username || $('inp-user').value || 'admin';
     $('reauth-pass').value = '';
-    $('reauth-modal').classList.remove('hidden');
-    $('reauth-modal').setAttribute('aria-hidden', 'false');
+    showNativeDialog($('reauth-modal'));
     setTimeout(function () {
       $('reauth-pass').focus();
     }, 50);
@@ -2946,8 +2988,7 @@
 
   function closeReauthModal() {
     state.reauthOpen = false;
-    $('reauth-modal').classList.add('hidden');
-    $('reauth-modal').setAttribute('aria-hidden', 'true');
+    hideNativeDialog($('reauth-modal'));
     $('reauth-pass').value = '';
   }
 
@@ -3119,18 +3160,23 @@
       }).catch(showErr);
     };
 
-    $('modal').addEventListener('click', function (e) {
-      if (e.target.getAttribute('data-close')) {
-        if (state.modalResolve) state.modalResolve(false);
-      }
-    });
+    var modalDlg = $('modal');
+    var reauthDlg = $('reauth-modal');
+    function dismissModal() {
+      if (state.modalResolve) state.modalResolve(false);
+    }
     $('modal-ok').onclick = function () {
       if (state.modalResolve) state.modalResolve(true);
     };
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && !$('modal').classList.contains('hidden')) {
-        if (state.modalResolve) state.modalResolve(false);
-      }
+    $('modal-cancel').onclick = dismissModal;
+    $('modal-close').onclick = dismissModal;
+    // Esc / closedby=any → événement native close
+    modalDlg.addEventListener('close', function () {
+      if (state.modalResolve) state.modalResolve(false);
+    });
+    // Reauth : ne pas laisser Esc fermer sans session
+    reauthDlg.addEventListener('cancel', function (e) {
+      e.preventDefault();
     });
   }
 

@@ -621,34 +621,31 @@ body {
   display: none !important;
 }
 
-.modal {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  display: grid;
-  place-items: center;
-  padding: 1rem;
-}
-
-.modal-backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.45);
-}
-
-.modal-card {
-  position: relative;
-  width: min(640px, 100%);
+dialog.modal-dialog {
+  width: min(640px, calc(100% - 2rem));
   max-height: min(90vh, 720px);
   overflow: auto;
-  background: var(--surface);
-  border-radius: 12px;
+  padding: 0;
   border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
 }
 
-.modal-card.modal-card--wide {
-  width: min(820px, 100%);
+dialog.modal-dialog.modal-dialog--wide {
+  width: min(820px, calc(100% - 2rem));
+}
+
+/* Empêche le scroll de la page derrière le modal (guide prevent-page-scroll-under-modal-dialog) */
+dialog.modal-dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog.modal-dialog::backdrop {
+  background: rgba(15, 23, 42, 0.45);
+  overflow: hidden;
+  overscroll-behavior: contain;
 }
 
 /* --- Éditeur de règles Palo --- */
@@ -845,8 +842,7 @@ label.switch {
   text-overflow: ellipsis;
 }
 
-.rights-matrix th.row-head,
-.rights-matrix td.row-head {
+.rights-matrix th.row-head {
   position: sticky;
   left: 0;
   z-index: 1;
@@ -864,11 +860,12 @@ label.switch {
   background: #f8fafc;
 }
 
-.rights-matrix tbody tr:hover td {
+.rights-matrix tbody tr:hover td,
+.rights-matrix tbody tr:hover th.row-head {
   background: var(--tree-hover);
 }
 
-.rights-matrix tbody tr:hover td.row-head {
+.rights-matrix tbody tr:hover th.row-head {
   background: var(--tree-active);
 }
 

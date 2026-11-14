@@ -99,46 +99,40 @@
       </div>
     </div>
 
-    <div id="modal" class="modal hidden" aria-hidden="true">
-      <div class="modal-backdrop" data-close="1"></div>
-      <div class="modal-card" role="dialog" aria-modal="true">
-        <header class="modal-header">
-          <h2 id="modal-title">…</h2>
-          <button type="button" class="btn btn-ghost" data-close="1" data-i18n-title="Fermer" title="Fermer" aria-label="Fermer">×</button>
-        </header>
-        <div id="modal-body" class="modal-body"></div>
-        <footer class="modal-footer">
-          <button type="button" class="btn" data-close="1" data-i18n="Annuler">Annuler</button>
-          <button type="button" id="modal-ok" class="btn btn-primary">OK</button>
-        </footer>
-      </div>
-    </div>
+    <dialog id="modal" class="modal-dialog" aria-labelledby="modal-title" closedby="any">
+      <header class="modal-header">
+        <h2 id="modal-title">…</h2>
+        <button type="button" class="btn btn-ghost" id="modal-close" data-i18n-title="Fermer" title="Fermer" aria-label="Fermer">×</button>
+      </header>
+      <div id="modal-body" class="modal-body"></div>
+      <footer class="modal-footer">
+        <button type="button" class="btn" id="modal-cancel" data-i18n="Annuler">Annuler</button>
+        <button type="button" id="modal-ok" class="btn btn-primary">OK</button>
+      </footer>
+    </dialog>
 
-    <div id="reauth-modal" class="modal hidden" aria-hidden="true">
-      <div class="modal-backdrop"></div>
-      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="reauth-title">
-        <header class="modal-header">
-          <h2 id="reauth-title" data-i18n="Session expirée">Session expirée</h2>
-        </header>
-        <form id="reauth-form" class="modal-body">
-          <p class="muted" data-i18n="La connexion au serveur Palo a expiré (inactivité). Reconnectez-vous pour continuer.">
-            La connexion au serveur Palo a expiré (inactivité). Reconnectez-vous pour continuer.
-          </p>
-          <label>
-            <span data-i18n="Identifiant">Identifiant</span>
-            <input id="reauth-user" type="text" autocomplete="username" required />
-          </label>
-          <label>
-            <span data-i18n="Mot de passe">Mot de passe</span>
-            <input id="reauth-pass" type="password" autocomplete="current-password" required />
-          </label>
-          <p id="reauth-error" class="error hidden"></p>
-          <div class="modal-footer" style="padding: 0; border: 0; justify-content: flex-end">
-            <button type="submit" id="reauth-ok" class="btn btn-primary" data-i18n="Se reconnecter">Se reconnecter</button>
-          </div>
-        </form>
-      </div>
-    </div>
+    <dialog id="reauth-modal" class="modal-dialog" aria-labelledby="reauth-title" closedby="none">
+      <header class="modal-header">
+        <h2 id="reauth-title" data-i18n="Session expirée">Session expirée</h2>
+      </header>
+      <form id="reauth-form" class="modal-body">
+        <p class="muted" data-i18n="La connexion au serveur Palo a expiré (inactivité). Reconnectez-vous pour continuer.">
+          La connexion au serveur Palo a expiré (inactivité). Reconnectez-vous pour continuer.
+        </p>
+        <label>
+          <span data-i18n="Identifiant">Identifiant</span>
+          <input id="reauth-user" type="text" autocomplete="username" required />
+        </label>
+        <label>
+          <span data-i18n="Mot de passe">Mot de passe</span>
+          <input id="reauth-pass" type="password" autocomplete="current-password" required />
+        </label>
+        <p id="reauth-error" class="error hidden"></p>
+        <div class="modal-footer" style="padding: 0; border: 0; justify-content: flex-end">
+          <button type="submit" id="reauth-ok" class="btn btn-primary" data-i18n="Se reconnecter">Se reconnecter</button>
+        </div>
+      </form>
+    </dialog>
 
     <script src="vendor/md5.js"></script>
     <script src="js/palo-csv.js"></script>
